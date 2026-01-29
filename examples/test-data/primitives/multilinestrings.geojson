@@ -1,0 +1,81 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "European Rivers",
+        "system": "Danube"
+      },
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [
+            [8.2275, 49.9929],
+            [13.4050, 52.5200],
+            [16.3738, 48.2082]
+          ],
+          [
+            [16.3738, 48.2082],
+            [19.0402, 47.4979],
+            [21.2257, 45.7489]
+          ],
+          [
+            [21.2257, 45.7489],
+            [26.1025, 44.4268],
+            [29.7436, 45.2396]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Pacific Crossing",
+        "system": "Airline routes"
+      },
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [
+            [139.6917, 35.6895],
+            [165.0, 40.0],
+            [175.0, 42.0]
+          ],
+          [
+            [-175.0, 42.0],
+            [-160.0, 40.0],
+            [-122.4194, 37.7749]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Trade Routes",
+        "system": "Historic"
+      },
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [
+            [-74.006, 40.7128],
+            [-50.0, 45.0],
+            [-30.0, 50.0]
+          ],
+          [
+            [-10.0, 52.0],
+            [0.0, 51.5],
+            [10.0, 53.0]
+          ],
+          [
+            [20.0, 52.0],
+            [30.0, 55.0],
+            [37.6173, 55.7558]
+          ]
+        ]
+      }
+    }
+  ]
+}

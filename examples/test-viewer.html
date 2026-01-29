@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeoArrow Deck Stream - Test Page</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+    }
+    
+    #container {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+    
+    #controls {
+      flex: 0 0 320px;
+      background: #2a2a2a;
+      padding: 20px;
+      overflow-y: auto;
+      border-right: 1px solid #3a3a3a;
+      z-index: 2;
+    }
+    
+    #deck-container {
+      flex: 1 1 auto;
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+    }
+    
+    #deck-container canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    
+    h1 {
+      font-size: 20px;
+      margin-bottom: 20px;
+      color: #4fc3f7;
+    }
+    
+    h2 {
+      font-size: 16px;
+      margin-top: 20px;
+      margin-bottom: 10px;
+      color: #81c784;
+    }
+    
+    .control-group {
+      margin-bottom: 20px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 14px;
+      color: #b0b0b0;
+    }
+    
+    select, input[type="range"], button {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 10px;
+      background: #3a3a3a;
+      border: 1px solid #4a4a4a;
+      color: #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    
+    button {
+      cursor: pointer;
+      background: #4fc3f7;
+      color: #1a1a1a;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+    
+    button:hover {
+      background: #81d4fa;
+    }
+    
+    button:disabled {
+      background: #555;
+      cursor: not-allowed;
+      color: #888;
+    }
+    
+    .range-value {
+      display: inline-block;
+      margin-left: 10px;
+      color: #4fc3f7;
+      font-weight: 600;
+    }
+    
+    .stats {
+      background: #333;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-top: 10px;
+      font-family: 'Courier New', monospace;
+    }
+    
+    .stats div {
+      margin: 3px 0;
+    }
+    
+    .stats .label {
+      color: #b0b0b0;
+    }
+    
+    .stats .value {
+      color: #4fc3f7;
+      float: right;
+    }
+    
+    .error {
+      background: #d32f2f;
+      color: white;
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 10px;
+      font-size: 12px;
+    }
+    
+    .info {
+      background: #1e88e5;
+      color: white;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 24px;
+      color: #4fc3f7;
+    }
+    
+    .checkbox-group {
+      margin: 10px 0;
+    }
+    
+    .checkbox-group label {
+      display: inline;
+      margin-left: 5px;
+    }
+    
+    input[type="checkbox"] {
+      width: auto;
+      margin-right: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="controls">
+      <h1>🌍 GeoArrow Deck Stream</h1>
+      
+      <div class="info">
+        Test page pour le parser GeoArrow → Deck.gl avec projection d3-geo.
+        Les fichiers Arrow doivent être encodés en <strong>separated</strong> ou en <strong>interleaved</strong>.
+      </div>
+      
+      <div class="control-group">
+        <label>Dataset</label>
+        <select id="dataset">
+          <option value="">-- Select a dataset --</option>
+          <optgroup label="Primitives - Interleaved">
+            <option value="primitives/points.interleaved">Points</option>
+            <option value="primitives/multipoints.interleaved">MultiPoints</option>
+            <option value="primitives/linestrings.interleaved">LineStrings</option>
+            <option value="primitives/multilinestrings.interleaved">MultiLineStrings</option>
+            <option value="primitives/polygons.interleaved">Polygons (simple)</option>
+            <option value="primitives/polygons-with-holes.interleaved">Polygons (with holes)</option>
+            <option value="primitives/multipolygons.interleaved">MultiPolygons</option>
+          </optgroup>
+          <optgroup label="Primitives - Separated">
+            <option value="primitives/points.separated">Points</option>
+            <option value="primitives/multipoints.separated">MultiPoints</option>
+            <option value="primitives/linestrings.separated">LineStrings</option>
+            <option value="primitives/multilinestrings.separated">MultiLineStrings</option>
+            <option value="primitives/polygons.separated">Polygons (simple)</option>
+            <option value="primitives/polygons-with-holes.separated">Polygons (with holes)</option>
+            <option value="primitives/multipolygons.separated">MultiPolygons</option>
+          </optgroup>
+          <optgroup label="Real Data">
+            <option value="real-data/ne_50m.line">NE 50m (LINE)</option>
+            <option value="real-data/ne_10m.polygon">NE 10m brut (POLYGON)</option>
+            <option value="real-data/countries_10m">Countries 10m via graticule (POLYGON)</option>
+            <option value="real-data/nuts2.line">NUTS 2</option>
+            <option value="real-data/fr-com2025.line">France limites communes</option>
+            <option value="real-data/fr-com2025-wgs84">France communes (POLYGON)</option>
+            <option value="real-data/lignes-du-reseau-star-de-rennes-metropole.line">Lignes STAR Rennes</option>
+
+          </optgroup>
+        </select>
+      </div>
+      
+      <div class="control-group">
+        <label>Projection</label>
+        <select id="projection">
+          <option value="identity">Identity (pass-through)</option>
+          <option value="mercator">Mercator</option>
+          <option value="orthographic">Orthographic (Globe)</option>
+          <option value="equalEarth" selected>Equal Earth</option>
+          <option value="naturalEarth">Natural Earth</option>
+          <optgroup label="Composite">
+            <option value="compositeFrance">France DOM-TOM</option>
+            <option value="compositeUSA">USA + Alaska/Hawaii</option>
+          </optgroup>
+        </select>
+      </div>
+      
+      <h2>Projection Settings</h2>
+      
+      <div class="control-group">
+        <label>Rotation Longitude <span class="range-value" id="rotLonValue">0°</span></label>
+        <input type="range" id="rotLon" min="-180" max="180" value="0" step="5">
+      </div>
+      
+      <div class="control-group">
+        <label>Rotation Latitude <span class="range-value" id="rotLatValue">-40°</span></label>
+        <input type="range" id="rotLat" min="-90" max="90" value="-40" step="5">
+      </div>
+      
+      <div class="control-group">
+        <label>Scale <span class="range-value" id="scaleValue">250</span></label>
+        <input type="range" id="scale" min="50" max="500" value="250" step="10">
+      </div>
+      
+      <div class="checkbox-group">
+        <input type="checkbox" id="animate">
+        <label for="animate">Auto-rotate</label>
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="rewind">
+        <label for="rewind">Rewind Polygons (RHR)</label>
+      </div>
+      
+      <div class="checkbox-group">
+        <input type="checkbox" id="enableLogging">
+        <label for="enableLogging">Enable console logs</label>
+      </div>
+      
+      <h2>Layer Settings</h2>
+      
+      <div class="control-group">
+        <label>Line Width <span class="range-value" id="widthValue">0.5</span></label>
+        <input type="range" id="width" min="0.1" max="5" value="0.5" step="0.1">
+      </div>
+      
+      <div class="checkbox-group">
+        <input type="checkbox" id="colorByAttribute">
+        <label for="colorByAttribute">Color by attribute</label>
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="renderAsText">
+        <label for="renderAsText">Render as Text (Points only)</label>
+      </div>
+      
+      <button id="loadBtn">Load & Parse</button>
+      
+      <div class="stats" id="stats" style="display: none;">
+        <div><span class="label">Detected type:</span><span class="value" id="detectedType">-</span></div>
+        <div><span class="label">Input features:</span><span class="value" id="inputFeatures">-</span></div>
+        <div><span class="label">Output paths:</span><span class="value" id="outputPaths">-</span></div>
+        <div><span class="label">Input coords:</span><span class="value" id="inputCoords">-</span></div>
+        <div><span class="label">Output coords:</span><span class="value" id="outputCoords">-</span></div>
+        <div><span class="label">Parse time:</span><span class="value" id="parseTime">-</span></div>
+        <div><span class="label">Memory:</span><span class="value" id="memory">-</span></div>
+      </div>
+      
+      <div class="error" id="error" style="display: none;"></div>
+    </div>
+    
+    <div id="deck-container">
+      <div id="loading">Loading libraries...</div>
+      <canvas id="deck-canvas"></canvas>
+    </div>
+  </div>
+  
+  <!-- Import maps for ES modules -->
+  <script type="module" src="test-viewer.js"></script>
+</body>
+</html>

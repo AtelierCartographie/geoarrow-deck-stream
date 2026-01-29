@@ -1,0 +1,66 @@
+{
+  "name": "geoarrow-deck-stream",
+  "version": "1.0.0",
+  "description": "High-performance GeoArrow to Deck.gl binary parser using d3-geo streaming",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:bundle": "rollup -c",
+    "prepare": "npm run build",
+    "dev": "tsc --watch",
+    "preview": "vite examples --port 8000",
+    "test": "vitest run --watch=false",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "geoarrow",
+    "deck.gl",
+    "d3-geo",
+    "webgl",
+    "geospatial",
+    "projection",
+    "binary",
+    "high-performance"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "d3-geo": "^3.1.1",
+    "earcut": "^3.0.2"
+  },
+  "devDependencies": {
+    "@deck.gl/core": "^9.0.0",
+    "@deck.gl/layers": "^9.0.0",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^12.3.0",
+    "@types/d3-geo": "^3.1.0",
+    "@types/earcut": "^3.0.0",
+    "apache-arrow": "^21.0.0",
+    "@geoarrow/geoarrow-js": "^0.3.3",
+    "rollup": "^4.55.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  },
+  "peerDependencies": {
+    "apache-arrow": ">=21.0.0",
+    "@deck.gl/core": ">=9.0.0",
+    "@deck.gl/layers": ">=9.0.0",
+    "@geoarrow/geoarrow-js": ">=0.3.0"
+  }
+}
