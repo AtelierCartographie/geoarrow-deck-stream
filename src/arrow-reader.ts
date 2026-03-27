@@ -100,14 +100,24 @@ export interface ExtractedCoordinates {
 export function detectGeometryType(
   table: Table,
   geometryColumnName = 'geometry'
-): 'point' | 'multipoint' | 'linestring' | 'polygon' | 'multilinestring' | 'multipolygon' | 'unknown' {
+): 'point' | 'multipoint' | 'linestring' | 'polygon' | 'multilinestring' | 'multipolygon' | 'wkb' | 'unknown' {
   const geomField = table.schema.fields.find(f => f.name === geometryColumnName);
   if (!geomField?.metadata) {
+    // Fallback: check if the column is Binary type (e.g., DuckDB WASM ST_AsWKB output)
+    const typeId = geomField?.type?.typeId;
+    if (typeId === 4 /* Binary */ || typeId === 13 /* LargeBinary */) {
+      return 'wkb';
+    }
     return 'unknown';
   }
 
   const extensionName = geomField.metadata.get('ARROW:extension:name');
   if (!extensionName) {
+    // Fallback: check if the column is Binary type
+    const typeId = geomField.type?.typeId;
+    if (typeId === 4 /* Binary */ || typeId === 13 /* LargeBinary */) {
+      return 'wkb';
+    }
     return 'unknown';
   }
 
@@ -118,6 +128,7 @@ export function detectGeometryType(
     case 'geoarrow.polygon': return 'polygon';
     case 'geoarrow.multilinestring': return 'multilinestring';
     case 'geoarrow.multipolygon': return 'multipolygon';
+    case 'geoarrow.wkb': return 'wkb';
     default: return 'unknown';
   }
 }

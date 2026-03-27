@@ -15,6 +15,8 @@ import { geoIdentity } from 'd3-geo';
 import type { GeoStream } from 'd3-geo';
 import type { Vector, Table } from 'apache-arrow';
 
+import { decodeWkbColumn } from './wkb-reader.js';
+
 import type {
   LineStringData,
   PolygonData,
@@ -97,11 +99,14 @@ export function parseGeometryWithStats(
 ): { data: BinaryPathData; stats: ParseStats; debug?: SinkDebugInfo } {
   const startTime = performance.now();
   
+  // Ensure native GeoArrow before extracting stats
+  const { table: resolvedTable } = ensureNativeGeoArrow(input);
+  
   // Get the Data chunk to work with
-  const inputData = getDataFromInput(input);
+  const inputData = getDataFromInput(resolvedTable);
   const inputCoords = countCoordinates(inputData);
   
-  const { data: outputData, debug } = runParse(input, options, !!options.debug);
+  const { data: outputData, debug } = runParse(resolvedTable, options, !!options.debug);
 
   const endTime = performance.now();
   
@@ -132,17 +137,30 @@ function getDataFromInput(table: Table, geometryColumnName = 'geometry'): Suppor
   return getFirstDataChunk(geomVector as Vector) as SupportedGeometryData;
 }
 
+/**
+ * If the table has a WKB geometry column, decode it to native GeoArrow.
+ * Returns the (possibly converted) table and the resolved geometry type.
+ */
+function ensureNativeGeoArrow(table: Table): { table: Table; geomType: ReturnType<typeof detectGeometryType> } {
+  let geomType = detectGeometryType(table);
+  if (geomType === 'wkb') {
+    const { table: convertedTable, geometryType } = decodeWkbColumn(table);
+    return { table: convertedTable, geomType: geometryType as typeof geomType };
+  }
+  return { table, geomType };
+}
+
 function runParse(
-  table: Table,
+  inputTable: Table,
   options: ParserOptions,
   collectDebug: boolean
 ): { data: BinaryPathData; debug?: SinkDebugInfo } {
   const { projection, capacityMultiplier = 1.5, debugSampleLimit } = options;
 
-  // Detect geometry type from metadata
-  const geomType = detectGeometryType(table);
-  
-  if (geomType === 'unknown') {
+  // Ensure native GeoArrow (convert WKB if needed)
+  const { table, geomType } = ensureNativeGeoArrow(inputTable);
+
+  if (geomType === 'unknown' || geomType === 'wkb') {
     throw new Error('Unsupported geometry type or missing ARROW:extension:name metadata');
   }
   
@@ -495,16 +513,18 @@ export async function parseGeometryBatched(
 ): Promise<BinaryPathData> {
   const { batchSize = 10000, onProgress, ...parserOptions } = options;
   
-  const data = getDataFromInput(input);
+  // Ensure native GeoArrow before checking data length
+  const { table: resolvedInput } = ensureNativeGeoArrow(input);
+  const data = getDataFromInput(resolvedInput);
   
   // For small datasets, use synchronous parsing
   if (data.length <= batchSize) {
-    return parseGeometry(input, parserOptions);
+    return parseGeometry(resolvedInput, parserOptions);
   }
   
   // TODO: Implement true batch processing with chunk merging
   // For now, fall back to synchronous (still efficient due to TypedArrays)
-  const result = parseGeometry(input, parserOptions);
+  const result = parseGeometry(resolvedInput, parserOptions);
   onProgress?.(1);
   return result;
 }
@@ -524,11 +544,11 @@ export const parseLineStringsBatched = parseGeometryBatched;
  * @returns Binary data ready for ScatterplotLayer
  */
 export function parsePoints(
-  table: Table,
+  inputTable: Table,
   options: ParserOptions
 ): BinaryPointData {
   const { projection, capacityMultiplier = 1.5 } = options;
-  const geomType = detectGeometryType(table);
+  const { table, geomType } = ensureNativeGeoArrow(inputTable);
   
   if (geomType !== 'point' && geomType !== 'multipoint') {
     throw new Error(`parsePoints requires Point or MultiPoint geometry, got: ${geomType}`);
@@ -641,11 +661,11 @@ export function parsePoints(
 import { createRewindStream } from './rewind.js';
 
 export function parsePolygonsToSolid(
-  table: Table,
+  inputTable: Table,
   options: ParserOptions
 ): BinaryPolygonData {
   const { projection, capacityMultiplier = 1.5, debug, debugSampleLimit, rewind } = options;
-  const geomType = detectGeometryType(table);
+  const { table, geomType } = ensureNativeGeoArrow(inputTable);
 
   // Default rewind logic: 
   // - use explicit option if provided
@@ -834,7 +854,7 @@ function streamMultiPolygonsWithPolygonSink(
 /**
  * Geometry type returned by detectGeometryType
  */
-export type GeometryTypeString = 'point' | 'multipoint' | 'linestring' | 'polygon' | 'multilinestring' | 'multipolygon' | 'unknown';
+export type GeometryTypeString = 'point' | 'multipoint' | 'linestring' | 'polygon' | 'multilinestring' | 'multipolygon' | 'wkb' | 'unknown';
 
 /**
  * Recommended layer type for each geometry

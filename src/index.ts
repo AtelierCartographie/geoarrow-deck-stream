@@ -246,3 +246,15 @@ export {
   type GeoParquetMetadata,
   type GeoParquetColumnMetadata,
 } from './crs-utils.js';
+
+// ============================================================================
+// WKB Reader (DuckDB WASM workaround)
+// ============================================================================
+
+export {
+  decodeWkbColumn,
+  isWkbGeometryColumn,
+  type WkbGeomType,
+  type DecodeWkbOptions,
+  type DecodeWkbResult,
+} from './wkb-reader.js';

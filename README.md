@@ -20,6 +20,42 @@ This module provides a **zero-serialization pipeline** for transforming GeoArrow
 - 🌪️ **Spherical Winding**: Automatic correction of ring direction (Rewind / Right-Hand Rule) using `d3-geo`
 - 🔺 **Integrated Triangulation**: Uses `earcut` internally to perform triangulation for `SolidPolygonLayer`
 
+## Supported Input Formats
+
+The library accepts Apache Arrow tables with geometry columns in three formats:
+
+| Format                   | Extension Name                                | Description                                                                                    |
+| ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **GeoArrow Interleaved** | `geoarrow.point`, `geoarrow.linestring`, etc. | Coordinates as `[x,y,x,y,...]` in a single `Float64Array`. Default in DuckDB-WASM, GeoParquet. |
+| **GeoArrow Separated**   | Same as above                                 | Coordinates as separate `x[]` and `y[]` arrays (Apache Arrow Struct encoding).                 |
+| **GeoArrow WKB**         | `geoarrow.wkb`                                | Well-Known Binary blobs in a `Binary` column. Auto-decoded to native GeoArrow before parsing.  |
+
+All geometry types are supported: **Point**, **MultiPoint**, **LineString**, **MultiLineString**, **Polygon** (with holes), **MultiPolygon**.
+
+### WKB Support
+
+WKB input (`geoarrow.wkb`) is **transparently decoded** — all parse functions (`parseGeometry`, `parsePoints`, `parsePolygonsToSolid`) detect WKB columns and convert them to native GeoArrow automatically. No additional code is needed.
+
+For explicit control, you can also decode WKB manually:
+
+```typescript
+import { decodeWkbColumn, isWkbGeometryColumn } from "geoarrow-deck-stream";
+
+// Check if table has WKB geometry
+if (isWkbGeometryColumn(table)) {
+  const { table: nativeTable, geometryType } = decodeWkbColumn(table);
+  console.log(`Decoded WKB → ${geometryType}`); // e.g. "multipolygon"
+}
+```
+
+Supported WKB features:
+
+- Little-endian and big-endian byte order
+- 2D, 3D (Z), and 4D (ZM) coordinates (Z/M values are dropped for Deck.gl)
+- ISO WKB and EWKB (PostGIS) variants with SRID
+- NULL geometry handling (validity bitmap)
+- Mixed type promotion (e.g., Polygon + MultiPolygon → MultiPolygon)
+
 ## CRS Detection & Projection Strategy
 
 GeoArrow inputs may be in WGS84 (requiring reprojection) or already projected (requiring pass-through). This library provides utilities to detect the CRS and choose the correct strategy, compliant with GeoArrow and GeoParquet specifications.
@@ -87,6 +123,51 @@ const layer = new SolidPolygonLayer({
 });
 ```
 
+### DuckDB-WASM Integration
+
+#### DuckDB-WASM ≥ 1.33 (transparent `geoarrow.wkb`)
+
+Since [v1.33.1-dev41](https://github.com/duckdb/duckdb-wasm/pull/2200), DuckDB-WASM natively returns geometry columns as `geoarrow.wkb`. The library handles this transparently — no special handling needed:
+
+```typescript
+import { parsePolygonsToSolid } from "geoarrow-deck-stream";
+import { geoEqualEarth } from "d3-geo";
+
+const db = await AsyncDuckDB.create(/* ... */);
+const conn = await db.connect();
+
+// Load the spatial extension
+await conn.query(`INSTALL spatial; LOAD spatial;`);
+
+// Query geometry directly — DuckDB returns geoarrow.wkb
+const table = await conn.query(`
+  SELECT geometry, name, population
+  FROM my_countries
+`);
+
+// geoarrow-deck-stream detects WKB and decodes it automatically
+const data = parsePolygonsToSolid(table, {
+  projection: geoEqualEarth().translate([512, 384]).scale(200),
+});
+```
+
+#### DuckDB-WASM < 1.33 (explicit `ST_AsWKB`)
+
+Older versions of DuckDB-WASM return geometry as an opaque BLOB that is not standard WKB. Use `ST_AsWKB()` to convert it explicitly:
+
+```typescript
+// Older DuckDB-WASM: must call ST_AsWKB() to produce valid WKB
+const table = await conn.query(`
+  SELECT ST_AsWKB(geometry) as geometry, name, population
+  FROM my_countries
+`);
+
+// Same API — WKB is auto-decoded
+const data = parsePolygonsToSolid(table, {
+  projection: geoEqualEarth().translate([512, 384]).scale(200),
+});
+```
+
 ## Composite Projections
 
 Support for composite projections (like `geoAlbersUsa` or France with DOM-TOM) where distant territories are displayed in insets.
@@ -140,8 +221,9 @@ const borderLayer = new PathLayer({
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         INPUT (GeoArrow)                            │
-│           Reads Float64Array coordinates directly                   │
+│                    INPUT (GeoArrow / WKB)                           │
+│       Reads Float64Array coordinates directly (native)              │
+│       or decodes WKB → native GeoArrow first                       │
 └─────────────────────────────────────────────────────────────────────┘
                                  │
                                  ▼
@@ -183,7 +265,7 @@ While "Zero-Copy" is the guiding principle, strict zero-copy is impossible when 
 
 We read directly from the underlying `Float64Array` buffers of the Apache Arrow table.
 
-- **No deserialization**: We do not parse JSON or WKB.
+- **No deserialization**: We do not parse JSON. WKB input is decoded once upfront into native GeoArrow (a necessary pre-processing step), then the rest of the pipeline reads the resulting buffers with zero-copy.
 - **No object allocation**: We never create `{x: 10, y: 20}` objects. We pass raw numbers `(x, y)` through the pipeline.
 - **Batched Access**: Coordinates are read sequentially, optimizing CPU cache usage.
 

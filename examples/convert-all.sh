@@ -66,6 +66,33 @@ for file in *.geojson; do
   echo ""
 done
 
+# WKB encoding for primitives
+echo "   🔸 WKB encoding..."
+for file in *.geojson; do
+  if [ ! -f "$file" ]; then
+    continue
+  fi
+  
+  basename="${file%.geojson}"
+  
+  echo "   🔹 $file → ${basename}.wkb.arrow"
+  ogr2ogr \
+    -f Arrow \
+    -lco GEOMETRY_ENCODING=WKB \
+    -lco COMPRESSION=NONE \
+    -skipfailures \
+    "${basename}.wkb.arrow" \
+    "$file" 2>&1 | grep -v "Warning" || true
+  
+  if [ -f "${basename}.wkb.arrow" ]; then
+    size=$(ls -lh "${basename}.wkb.arrow" | awk '{print $5}')
+    echo "      ✓ WKB (${size})"
+  else
+    echo "      ✗ WKB failed"
+  fi
+done
+echo ""
+
 cd ..
 
 # ============================================
@@ -137,6 +164,9 @@ ls -lh primitives/*.separated.arrow 2>/dev/null || echo "   (none)"
 echo ""
 echo "Primitives (INTERLEAVED):"
 ls -lh primitives/*.interleaved.arrow 2>/dev/null || echo "   (none)"
+echo ""
+echo "Primitives (WKB):"
+ls -lh primitives/*.wkb.arrow 2>/dev/null || echo "   (none)"
 echo ""
 echo "Real data (INTERLEAVED):"
 ls -lh real-data/*.arrow 2>/dev/null || echo "   (none)"

@@ -23,6 +23,8 @@ import {
   // Geometry detection
   detectGeometryType,
   getLayerType,
+  // WKB support
+  decodeWkbColumn,
   // Parsers by layer type
   parseGeometry,
   parseGeometryWithStats,
@@ -112,11 +114,21 @@ async function loadArrowFile(filename) {
     const arrayBuffer = await response.arrayBuffer();
     log('📊 ArrayBuffer size:', arrayBuffer.byteLength, 'bytes');
     
-    const table = tableFromIPC(arrayBuffer);
+    let table = tableFromIPC(arrayBuffer);
     log('✅ Arrow table parsed:', table.numRows, 'rows,', table.numCols, 'columns');
     
     // Detect geometry type from metadata
-    const geometryType = detectGeometryType(table);
+    let geometryType = detectGeometryType(table);
+    
+    // If WKB, decode to native GeoArrow and re-detect
+    if (geometryType === 'wkb') {
+      log('🔄 WKB detected, decoding to native GeoArrow...');
+      const result = decodeWkbColumn(table);
+      table = result.table;
+      geometryType = result.geometryType;
+      log('✅ WKB decoded → native', geometryType);
+    }
+    
     const layerType = getLayerType(geometryType);
     log('🔍 Detected geometry type:', geometryType, '→', layerType);
     
