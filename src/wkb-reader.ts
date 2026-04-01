@@ -891,9 +891,9 @@ export function isWkbGeometryColumn(
   const field = table.schema.fields.find(f => f.name === columnName);
   if (!field) return false;
 
-  // Check for explicit geoarrow.wkb extension name
+  // Check for explicit geoarrow.wkb extension name (and legacy ogc.wkb)
   const extensionName = field.metadata?.get('ARROW:extension:name');
-  if (extensionName === 'geoarrow.wkb') return true;
+  if (extensionName === 'geoarrow.wkb' || extensionName === 'ogc.wkb') return true;
 
   // Check for Binary type (typeId 4 = Binary in Apache Arrow)
   // DuckDB WASM produces Binary columns from ST_AsWKB without GeoArrow metadata

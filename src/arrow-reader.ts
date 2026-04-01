@@ -129,6 +129,7 @@ export function detectGeometryType(
     case 'geoarrow.multilinestring': return 'multilinestring';
     case 'geoarrow.multipolygon': return 'multipolygon';
     case 'geoarrow.wkb': return 'wkb';
+    case 'ogc.wkb': return 'wkb'; // Legacy name before GeoArrow spec standardization
     default: return 'unknown';
   }
 }
