@@ -44,6 +44,11 @@ function getGeometryVector(table: Table): Vector {
   return geomCol;
 }
 
+function splitTableIntoTwoBatches(table: Table): Table {
+  const midpoint = Math.ceil(table.numRows / 2);
+  return table.slice(0, midpoint).concat(table.slice(midpoint));
+}
+
 // =============================================================================
 // UNIT TESTS: GrowableBuffer
 // =============================================================================
@@ -231,6 +236,28 @@ describe('parseGeometry - LineString', () => {
     expect(result.positions.length).toBeGreaterThan(0);
   });
 
+  it('should parse multi-batch tables without dropping features', () => {
+    const multiBatchTable = splitTableIntoTwoBatches(interleavedTable);
+    const singleBatchResult = parseGeometry(interleavedTable, {
+      projection: geoIdentity()
+    });
+    const multiBatchResult = parseGeometry(multiBatchTable, {
+      projection: geoIdentity()
+    });
+
+    expect(multiBatchTable.batches.length).toBeGreaterThan(1);
+    expect(multiBatchResult.length).toBe(singleBatchResult.length);
+    expect(Array.from(multiBatchResult.featureIds)).toEqual(
+      Array.from(singleBatchResult.featureIds)
+    );
+    expect(Array.from(multiBatchResult.startIndices)).toEqual(
+      Array.from(singleBatchResult.startIndices)
+    );
+    expect(Array.from(multiBatchResult.positions)).toEqual(
+      Array.from(singleBatchResult.positions)
+    );
+  });
+
   it('should return stats when requested', () => {
     const { data, stats } = parseGeometryWithStats(interleavedTable, {
       projection: geoIdentity()
@@ -414,6 +441,31 @@ describe('Deck.gl integration', () => {
     
     expect(indices!.length).toBeGreaterThan(0);
     expect(indices!.length % 3).toBe(0);
+  });
+
+  it('should build identical solid polygon output for multi-batch tables', () => {
+    const multiBatchTable = splitTableIntoTwoBatches(polygonTable);
+    const singleBatchData = parsePolygonsToSolid(polygonTable, {
+      projection: geoIdentity()
+    });
+    const multiBatchData = parsePolygonsToSolid(multiBatchTable, {
+      projection: geoIdentity()
+    });
+
+    expect(multiBatchTable.batches.length).toBeGreaterThan(1);
+    expect(multiBatchData.length).toBe(singleBatchData.length);
+    expect(Array.from(multiBatchData.featureIds)).toEqual(
+      Array.from(singleBatchData.featureIds)
+    );
+    expect(Array.from(multiBatchData.polygonIndices)).toEqual(
+      Array.from(singleBatchData.polygonIndices)
+    );
+    expect(Array.from(multiBatchData.holeIndices)).toEqual(
+      Array.from(singleBatchData.holeIndices)
+    );
+    expect(Array.from(multiBatchData.positions)).toEqual(
+      Array.from(singleBatchData.positions)
+    );
   });
 
   it('should calculate bounds correctly', () => {

@@ -28,6 +28,7 @@ import {
   Schema,
   Struct,
   Table,
+  Vector,
 } from 'apache-arrow';
 
 // ─── WKB geometry type constants ─────────────────────────────────────
@@ -847,31 +848,43 @@ export function decodeWkbColumn(
   ]);
   const geomField = new Field(geometryColumn, geomData!.type, true, geomMetadata);
 
-  // Collect non-geometry columns from input table
+  // Collect non-geometry columns from input table while preserving chunk layout.
   const fields: Field[] = [geomField];
-  const columns: Data[] = [geomData!];
+  const nonGeometryColumns: Array<{ index: number }> = [];
 
-  for (const field of inputTable.schema.fields) {
+  for (let index = 0; index < inputTable.schema.fields.length; index++) {
+    const field = inputTable.schema.fields[index];
     if (field.name === geometryColumn) continue;
-    const col = inputTable.getChild(field.name);
-    if (!col) continue;
     fields.push(field);
-    // Get the first data chunk from each column
-    columns.push(col.data[0]);
+    nonGeometryColumns.push({ index });
   }
 
-  // Build the output table
-  const schema = new Schema(fields);
+  const schema = new Schema(fields, new Map(inputTable.schema.metadata));
   const structType = new Struct(fields);
-  const structData = makeData({
-    type: structType,
-    length: wkbs.length,
-    children: columns,
-  });
-  const batch = new RecordBatch(schema, structData);
+  const geometryVector = new Vector([geomData!]);
+  const batches: RecordBatch[] = [];
+  let rowOffset = 0;
+
+  for (const batch of inputTable.batches) {
+    const batchRowCount = batch.numRows;
+    const geometryChunk = geometryVector.slice(rowOffset, rowOffset + batchRowCount).data[0];
+    const children: Data[] = [geometryChunk];
+
+    for (const column of nonGeometryColumns) {
+      children.push(batch.data.children[column.index]);
+    }
+
+    const structData = makeData({
+      type: structType,
+      length: batchRowCount,
+      children,
+    });
+    batches.push(new RecordBatch(schema, structData));
+    rowOffset += batchRowCount;
+  }
 
   return {
-    table: new Table(schema, batch),
+    table: new Table(schema, batches),
     geometryType: detectedType,
   };
 }

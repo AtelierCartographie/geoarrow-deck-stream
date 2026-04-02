@@ -135,23 +135,27 @@ export function detectGeometryType(
 }
 
 /**
- * Get the first Data chunk from a Vector (for streaming)
- * 
- * Most GeoArrow sources produce a single chunk. For multi-chunk vectors,
- * callers should iterate over vector.data.
+ * Get all Data chunks from a Vector or wrap a single Data instance.
+ */
+export function getDataChunks<T extends GeoArrowData>(
+  input: Vector | Data
+): T[] {
+  if ('data' in input) {
+    if (input.data.length === 0) {
+      throw new Error('Vector has no data chunks');
+    }
+    return input.data as T[];
+  }
+  return [input as T];
+}
+
+/**
+ * Get the first Data chunk from a Vector (for callers that explicitly want the first chunk).
  */
 export function getFirstDataChunk<T extends GeoArrowData>(
   input: Vector | Data
 ): T {
-  if ('data' in input) {
-    // It's a Vector - get first chunk
-    if (input.data.length === 0) {
-      throw new Error('Vector has no data chunks');
-    }
-    return input.data[0] as T;
-  }
-  // It's already a Data instance
-  return input as T;
+  return getDataChunks<T>(input)[0];
 }
 
 /**
