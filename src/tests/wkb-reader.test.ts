@@ -13,7 +13,16 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { Table, Field, Schema, RecordBatch, makeData, Binary, Struct } from 'apache-arrow';
+import {
+  Table,
+  Field,
+  Schema,
+  RecordBatch,
+  makeData,
+  Binary,
+  Struct,
+  vectorFromArray,
+} from 'apache-arrow';
 import { geoIdentity } from 'd3-geo';
 import {
   decodeWkbColumn,
@@ -191,6 +200,7 @@ function wkbMultiPolygon(polygons: [number, number][][][], le = true): Uint8Arra
 function buildWkbTable(
   wkbs: (Uint8Array | null)[],
   columnName = 'geometry',
+  attributes: Record<string, readonly unknown[]> = {},
 ): Table {
   const n = wkbs.length;
 
@@ -231,6 +241,12 @@ function buildWkbTable(
   const fields: Field[] = [geomField];
   const columns: any[] = [binaryData];
 
+  for (const [name, values] of Object.entries(attributes)) {
+    const vector = vectorFromArray(values);
+    fields.push(new Field(name, vector.type, vector.nullable));
+    columns.push(vector.data[0]);
+  }
+
   const schema = new Schema(fields);
   const structType = new Struct(fields);
   const structData = makeData({
@@ -240,6 +256,11 @@ function buildWkbTable(
   });
   const batch = new RecordBatch(schema, structData);
   return new Table(schema, batch);
+}
+
+function splitTableIntoTwoBatches(table: Table): Table {
+  const midpoint = Math.ceil(table.numRows / 2);
+  return table.slice(0, midpoint).concat(table.slice(midpoint));
 }
 
 
@@ -529,6 +550,43 @@ describe('WKB Integration - parseGeometry pipeline', () => {
     const result = parsePoints(table, { projection: identity });
 
     expect(result.length).toBe(2);
+    expect(result.positions[0]).toBeCloseTo(2.35);
+    expect(result.positions[1]).toBeCloseTo(48.85);
+    expect(result.positions[2]).toBeCloseTo(4.83);
+    expect(result.positions[3]).toBeCloseTo(45.76);
+  });
+
+  it('should preserve rows and attributes when decoding multi-batch WKB tables', () => {
+    const inputTable = splitTableIntoTwoBatches(
+      buildWkbTable(
+        [wkbPoint(1, 2), wkbPoint(3, 4), wkbPoint(5, 6)],
+        'geometry',
+        { label: ['a', 'b', 'c'] }
+      )
+    );
+
+    const { table } = decodeWkbColumn(inputTable);
+    const labelColumn = table.getChild('label');
+
+    expect(inputTable.batches.length).toBeGreaterThan(1);
+    expect(table.numRows).toBe(3);
+    expect(table.batches.length).toBe(2);
+    expect(labelColumn?.get(0)).toBe('a');
+    expect(labelColumn?.get(1)).toBe('b');
+    expect(labelColumn?.get(2)).toBe('c');
+  });
+
+  it('should parse multi-batch WKB points without dropping features', () => {
+    const table = splitTableIntoTwoBatches(
+      buildWkbTable([wkbPoint(2.35, 48.85), wkbPoint(4.83, 45.76)])
+    );
+    const identity = geoIdentity().reflectY(false) as any;
+
+    const result = parsePoints(table, { projection: identity });
+
+    expect(table.batches.length).toBeGreaterThan(1);
+    expect(result.length).toBe(2);
+    expect(Array.from(result.featureIds)).toEqual([0, 1]);
     expect(result.positions[0]).toBeCloseTo(2.35);
     expect(result.positions[1]).toBeCloseTo(48.85);
     expect(result.positions[2]).toBeCloseTo(4.83);

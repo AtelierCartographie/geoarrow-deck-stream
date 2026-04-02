@@ -150,6 +150,7 @@ export {
   extractMultiPolygonCoordinates,
   type ExtractedCoordinates,
   // Data chunk access
+  getDataChunks,
   getFirstDataChunk,
   // Coordinate counting
   countCoordinates,
