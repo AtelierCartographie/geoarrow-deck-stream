@@ -1,12 +1,12 @@
 /**
  * GeoArrow Deck Stream - Type Definitions
- * 
+ *
  * Zero-serialization binary types for high-performance geospatial rendering.
  * Uses official @geoarrow/geoarrow-js types for GeoArrow geometry structures.
  */
 
-import type { GeoStream, GeoProjection } from 'd3-geo';
-import { data, vector, type, child } from '@geoarrow/geoarrow-js';
+import type { GeoStream, GeoProjection } from "d3-geo";
+import { data, vector, type, child } from "@geoarrow/geoarrow-js";
 
 // Re-export GeoArrow types from the official library namespaces
 // Data types (single chunk access)
@@ -79,19 +79,19 @@ export const getMultiPolygonChild = child.getMultiPolygonChild;
 export interface BinaryPathData {
   /** Total number of paths (may exceed input feature count due to clipping) */
   readonly length: number;
-  
+
   /** Flat array of projected X,Y coordinates [x0,y0,x1,y1,...] */
   readonly positions: Float32Array;
-  
+
   /** Start index of each path in the positions array (divided by 2) */
   readonly startIndices: Uint32Array;
-  
-  /** 
+
+  /**
    * Maps each output path back to the original Arrow row index.
    * Critical for attribute lookups when features are split by projection.
    */
   readonly featureIds: Uint32Array;
-  
+
   /** Number of coordinates per vertex (always 2 for X,Y) */
   readonly size: 2;
 }
@@ -102,22 +102,22 @@ export interface BinaryPathData {
 export interface BinaryPolygonData {
   /** Total number of polygons */
   readonly length: number;
-  
+
   /** Flat array of projected X,Y coordinates [x0,y0,x1,y1,...] */
   readonly positions: Float32Array;
-  
+
   /** Start index of each polygon in the positions array (divided by 2) */
   readonly polygonIndices: Uint32Array;
-  
+
   /** Start index of each ring (for handling holes) within all polygons */
   readonly holeIndices: Uint32Array;
 
   /** Triangular indices for rendering without tessellation */
   readonly indices?: Uint32Array;
-  
+
   /** Maps each output polygon back to the original Arrow row index */
   readonly featureIds: Uint32Array;
-  
+
   /** Number of coordinates per vertex (always 2 for X,Y) */
   readonly size: 2;
 }
@@ -128,13 +128,13 @@ export interface BinaryPolygonData {
 export interface BinaryPointData {
   /** Total number of points */
   readonly length: number;
-  
+
   /** Flat array of projected X,Y coordinates [x0,y0,x1,y1,...] */
   readonly positions: Float32Array;
-  
+
   /** Maps each output point back to the original Arrow row index */
   readonly featureIds: Uint32Array;
-  
+
   /** Number of coordinates per point (always 2 for X,Y) */
   readonly size: 2;
 }
@@ -145,19 +145,19 @@ export interface BinaryPointData {
 
 /**
  * Duck-typed projection interface.
- * 
+ *
  * Any object that implements `.stream()` can be used as a projection.
  * This allows using composite projections (like geoAlbersUsa or custom composites)
  * which are not GeoProjection instances but implement the same streaming interface.
- * 
+ *
  * @example
  * ```typescript
  * // Standard d3 projection
  * const proj1: ProjectionLike = geoOrthographic();
- * 
+ *
  * // Composite projection (implements stream() but not full GeoProjection)
  * const proj2: ProjectionLike = buildCompositeProjection({ ... });
- * 
+ *
  * // d3's AlbersUSA
  * const proj3: ProjectionLike = geoAlbersUsa();
  * ```
@@ -176,28 +176,28 @@ export interface ParserOptions {
   /**
    * D3 projection to use. Pass null or geoIdentity() for pass-through mode.
    * The projection should be fully configured (center, rotate, scale, etc.)
-   * 
+   *
    * Accepts:
    * - Standard d3 projections (geoOrthographic, geoMercator, etc.)
    * - Composite projections (geoAlbersUsa, buildCompositeProjection, etc.)
    * - Any object with a `.stream()` method
    */
   projection: GeoProjection | ProjectionLike;
-  
+
   /**
    * Initial buffer capacity multiplier.
    * For reprojections with clipping, use 2.0+. For identity, use 1.0.
    * @default 1.5
    */
   capacityMultiplier?: number;
-  
+
   /**
    * Correct spherical ring winding (Right-Hand Rule) before projection.
    * Necessary for polygons covering large areas or crossing antimeridian.
    * @default true
    */
   rewind?: boolean;
-  
+
   /** Enable sink debug capture (counts, samples). */
   debug?: boolean;
 
@@ -228,10 +228,10 @@ export interface SinkDebugInfo {
 export interface AllocationConfig {
   /** Initial capacity for positions array (number of floats) */
   initialPositionCapacity: number;
-  
+
   /** Initial capacity for paths/features */
   initialPathCapacity: number;
-  
+
   /** Growth factor when buffers need expansion */
   growthFactor: number;
 }
@@ -247,19 +247,19 @@ export interface AllocationConfig {
 export interface SinkState {
   /** Current write position in positions array */
   positionIndex: number;
-  
+
   /** Current path count */
   pathCount: number;
-  
+
   /** Current feature ID being processed */
   currentFeatureId: number;
-  
+
   /** Whether we're inside a line/ring */
   inLine: boolean;
-  
+
   /** Start position of current line (for tracking) */
   lineStartPosition: number;
-  
+
   /** Point count in current line */
   pointsInLine: number;
 }
@@ -279,16 +279,16 @@ export interface SinkBuffers {
 export interface BinarySink extends GeoStream {
   /** Get the current state (for debugging/testing) */
   getState(): Readonly<SinkState>;
-  
+
   /** Get the raw buffers (may have unused capacity) */
   getBuffers(): SinkBuffers;
-  
+
   /** Finalize and return trimmed output */
   finalize(): BinaryPathData;
-  
+
   /** Reset sink for reuse with new data */
   reset(): void;
-  
+
   /** Set the current feature ID (called by driver between features) */
   setFeatureId(id: number): void;
 
@@ -302,10 +302,10 @@ export interface BinarySink extends GeoStream {
 export interface BinaryPolygonSink extends GeoStream {
   /** Finalize and return polygon data */
   finalize(): BinaryPolygonData;
-  
+
   /** Reset sink for reuse with new data */
   reset(): void;
-  
+
   /** Set the current feature ID (called by driver between features) */
   setFeatureId(id: number): void;
 
@@ -339,7 +339,7 @@ export interface BinaryPathLayerProps {
       getPath: DeckBinaryAttribute;
     };
   };
-  _pathType: 'open';
+  _pathType: "open";
 }
 
 /**
@@ -352,6 +352,7 @@ export interface BinaryPolygonLayerProps {
     attributes: {
       getPolygon: DeckBinaryAttribute;
       indices?: Uint32Array;
+      vertexValid?: DeckBinaryAttribute;
     };
   };
   _normalize: false;
@@ -364,7 +365,7 @@ export interface BinaryPolygonLayerProps {
 export interface BinaryTextLayerProps {
   // Use binary attribute for position
   getPosition: { value: Float32Array; size: 2 };
-  
+
   // Helpers for the hybrid pattern
   numInstances: number;
   featureIds: Uint32Array;
@@ -407,19 +408,19 @@ export type BBox = [number, number, number, number];
 export interface ParseStats {
   /** Number of input features processed */
   inputFeatures: number;
-  
+
   /** Number of output paths generated */
   outputPaths: number;
-  
+
   /** Total input coordinate count */
   inputCoordinates: number;
-  
+
   /** Total output coordinate count */
   outputCoordinates: number;
-  
+
   /** Processing time in milliseconds */
   processingTimeMs: number;
-  
+
   /** Peak memory usage estimate in bytes */
   peakMemoryBytes: number;
 }
