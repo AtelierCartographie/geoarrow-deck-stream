@@ -44,6 +44,11 @@ function loadArrowTable(filename: string): Table {
   return tableFromIPC(buffer);
 }
 
+function splitTableIntoTwoBatches(table: Table): Table {
+  const midpoint = Math.ceil(table.numRows / 2);
+  return table.slice(0, midpoint).concat(table.slice(midpoint));
+}
+
 function getGeometryVector(table: Table): Vector {
   // GeoArrow tables typically have a 'geometry' or 'wkb_geometry' column
   const geomCol = table.getChild("geometry") ?? table.getChild("wkb_geometry");
@@ -350,6 +355,84 @@ describe("parseGeometry - MultiPolygon", () => {
     expect(result.length).toBeGreaterThan(0);
     expect(result.positions.length).toBeGreaterThan(0);
     expect(result.featureIds.length).toBe(result.length);
+  });
+});
+
+// =============================================================================
+// INTEGRATION TESTS: Multi-batch Arrow tables
+// =============================================================================
+
+describe("multi-batch Arrow tables", () => {
+  it("parses every LineString batch and preserves absolute feature ids", () => {
+    const table = loadArrowTable("linestrings.interleaved.arrow");
+    const singleBatch = parseGeometry(table, { projection: geoIdentity() });
+    const multiBatchTable = splitTableIntoTwoBatches(table);
+    const multiBatch = parseGeometry(multiBatchTable, {
+      projection: geoIdentity(),
+    });
+
+    expect(multiBatchTable.batches.length).toBeGreaterThan(1);
+    expect(multiBatch.length).toBe(singleBatch.length);
+    expect(Array.from(multiBatch.featureIds)).toEqual(
+      Array.from(singleBatch.featureIds),
+    );
+    expect(Array.from(multiBatch.startIndices)).toEqual(
+      Array.from(singleBatch.startIndices),
+    );
+    expect(Array.from(multiBatch.positions)).toEqual(
+      Array.from(singleBatch.positions),
+    );
+  });
+
+  it("reports stats across every RecordBatch", () => {
+    const table = loadArrowTable("linestrings.interleaved.arrow");
+    const multiBatchTable = splitTableIntoTwoBatches(table);
+
+    const { stats } = parseGeometryWithStats(multiBatchTable, {
+      projection: geoIdentity(),
+    });
+
+    expect(multiBatchTable.batches.length).toBeGreaterThan(1);
+    expect(stats.inputFeatures).toBe(table.numRows);
+    expect(stats.inputCoordinates).toBeGreaterThan(0);
+  });
+
+  it("parses every Point batch and keeps row ids absolute", () => {
+    const table = loadArrowTable("points.interleaved.arrow");
+    const singleBatch = parsePoints(table, { projection: geoIdentity() });
+    const multiBatchTable = splitTableIntoTwoBatches(table);
+    const multiBatch = parsePoints(multiBatchTable, {
+      projection: geoIdentity(),
+    });
+
+    expect(multiBatchTable.batches.length).toBeGreaterThan(1);
+    expect(multiBatch.length).toBe(singleBatch.length);
+    expect(Array.from(multiBatch.featureIds)).toEqual(
+      Array.from(singleBatch.featureIds),
+    );
+    expect(Array.from(multiBatch.positions)).toEqual(
+      Array.from(singleBatch.positions),
+    );
+  });
+
+  it("parses solid polygons with holes across batches", () => {
+    const table = loadArrowTable("polygons-with-holes.interleaved.arrow");
+    const singleBatch = parsePolygonsToSolid(table, {
+      projection: geoIdentity(),
+    });
+    const multiBatchTable = splitTableIntoTwoBatches(table);
+    const multiBatch = parsePolygonsToSolid(multiBatchTable, {
+      projection: geoIdentity(),
+    });
+    const props = createSolidPolygonLayerProps(multiBatch);
+
+    expect(multiBatchTable.batches.length).toBeGreaterThan(1);
+    expect(multiBatch.length).toBe(singleBatch.length);
+    expect(Array.from(multiBatch.featureIds)).toEqual(
+      Array.from(singleBatch.featureIds),
+    );
+    expect(props.data.attributes.indices?.length).toBeGreaterThan(0);
+    expect(props.data.attributes.vertexValid).toBeDefined();
   });
 });
 

@@ -37,7 +37,7 @@ import type {
 import { createBinarySink, createPolygonSink } from "./sink.js";
 import {
   detectGeometryType,
-  getFirstDataChunk,
+  getDataChunks,
   extractPointCoordinates,
   extractMultiPointCoordinates,
   extractLineStringCoordinates,
@@ -102,9 +102,11 @@ export function parseGeometryWithStats(
   // Ensure native GeoArrow before extracting stats
   const { table: resolvedTable } = ensureNativeGeoArrow(input);
 
-  // Get the Data chunk to work with
-  const inputData = getDataFromInput(resolvedTable);
-  const inputCoords = countCoordinates(inputData);
+  const { chunks, totalLength } = getDataChunksFromInput(resolvedTable);
+  const inputCoords = chunks.reduce(
+    (sum, chunk) => sum + countCoordinates(chunk),
+    0,
+  );
 
   const { data: outputData, debug } = runParse(
     resolvedTable,
@@ -115,7 +117,7 @@ export function parseGeometryWithStats(
   const endTime = performance.now();
 
   const stats: ParseStats = {
-    inputFeatures: inputData.length,
+    inputFeatures: totalLength,
     outputPaths: outputData.length,
     inputCoordinates: inputCoords,
     outputCoordinates: outputData.positions.length / 2,
@@ -131,12 +133,12 @@ export const parseLineStringsWithStats = parseGeometryWithStats;
 export const parsePolygonsWithStats = parseGeometryWithStats;
 
 /**
- * Get the Data chunk from a Table
+ * Get the Data chunks from a Table and their absolute row offsets.
  */
-function getDataFromInput(
+function getDataChunksFromInput(
   table: Table,
   geometryColumnName = "geometry",
-): SupportedGeometryData {
+): { chunks: SupportedGeometryData[]; rowOffsets: number[]; totalLength: number } {
   const geomVector =
     table.getChild(geometryColumnName) ?? table.getChild("wkb_geometry");
   if (!geomVector) {
@@ -144,7 +146,17 @@ function getDataFromInput(
       `No geometry column found. Available: ${table.schema.fields.map((f) => f.name).join(", ")}`,
     );
   }
-  return getFirstDataChunk(geomVector as Vector) as SupportedGeometryData;
+
+  const chunks = getDataChunks(geomVector as Vector) as SupportedGeometryData[];
+  const rowOffsets: number[] = [];
+  let totalLength = 0;
+
+  for (const chunk of chunks) {
+    rowOffsets.push(totalLength);
+    totalLength += chunk.length;
+  }
+
+  return { chunks, rowOffsets, totalLength };
 }
 
 /**
@@ -179,15 +191,13 @@ function runParse(
     );
   }
 
-  // Get the Data chunk to work with
-  const inputData = getDataFromInput(table);
+  const { chunks, rowOffsets, totalLength } = getDataChunksFromInput(table);
+  const coordCount = chunks.reduce(
+    (sum, chunk) => sum + countCoordinates(chunk),
+    0,
+  );
 
-  // Estimate buffer sizes based on input
-  // We assume worst-case (reprojection) for buffer sizing to be safe
-  const length = inputData.length;
-  const coordCount = countCoordinates(inputData);
-
-  const sizes = estimateBufferSizes(coordCount, length, false);
+  const sizes = estimateBufferSizes(coordCount, totalLength, false);
 
   // Create sink with estimated capacity
   const sink = createBinarySink({
@@ -202,15 +212,34 @@ function runParse(
   // Connect projection to sink via D3's stream API
   const stream = projection.stream(sink);
 
-  // Process geometries based on detected type
-  if (geomType === "linestring") {
-    streamLineStrings(inputData as LineStringData, stream, sink);
-  } else if (geomType === "polygon") {
-    streamPolygons(inputData as PolygonData, stream, sink);
-  } else if (geomType === "multilinestring") {
-    streamMultiLineStrings(inputData as MultiLineStringData, stream, sink);
-  } else if (geomType === "multipolygon") {
-    streamMultiPolygons(inputData as MultiPolygonData, stream, sink);
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    const inputData = chunks[chunkIndex];
+    const featureIdOffset = rowOffsets[chunkIndex];
+
+    if (geomType === "linestring") {
+      streamLineStrings(
+        inputData as LineStringData,
+        stream,
+        sink,
+        featureIdOffset,
+      );
+    } else if (geomType === "polygon") {
+      streamPolygons(inputData as PolygonData, stream, sink, featureIdOffset);
+    } else if (geomType === "multilinestring") {
+      streamMultiLineStrings(
+        inputData as MultiLineStringData,
+        stream,
+        sink,
+        featureIdOffset,
+      );
+    } else if (geomType === "multipolygon") {
+      streamMultiPolygons(
+        inputData as MultiPolygonData,
+        stream,
+        sink,
+        featureIdOffset,
+      );
+    }
   }
 
   const outputData = sink.finalize();
@@ -232,6 +261,7 @@ function streamLineStrings(
   data: LineStringData,
   stream: GeoStream,
   sink: { setFeatureId: (id: number) => void },
+  featureIdOffset = 0,
 ): void {
   const { coords, geomOffsets } = extractLineStringCoordinates(data);
   const { flatCoords, dim, separatedCoords } = coords;
@@ -240,7 +270,7 @@ function streamLineStrings(
   if (separatedCoords) {
     const { x: xCoords, y: yCoords } = separatedCoords;
     for (let featureIdx = 0; featureIdx < length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
       const startOffset = geomOffsets[featureIdx];
       const endOffset = geomOffsets[featureIdx + 1];
 
@@ -254,7 +284,7 @@ function streamLineStrings(
     }
   } else {
     for (let featureIdx = 0; featureIdx < length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
 
       const startOffset = geomOffsets[featureIdx];
       const endOffset = geomOffsets[featureIdx + 1];
@@ -284,6 +314,7 @@ function streamPolygons(
   data: PolygonData,
   stream: GeoStream,
   sink: { setFeatureId: (id: number) => void },
+  featureIdOffset = 0,
 ): void {
   const { coords, geomOffsets, ringOffsets } = extractPolygonCoordinates(data);
   const { flatCoords, dim, separatedCoords } = coords;
@@ -292,7 +323,7 @@ function streamPolygons(
   if (separatedCoords) {
     const { x: xCoords, y: yCoords } = separatedCoords;
     for (let featureIdx = 0; featureIdx < length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
       const ringStart = geomOffsets[featureIdx];
       const ringEnd = geomOffsets[featureIdx + 1];
 
@@ -310,7 +341,7 @@ function streamPolygons(
     }
   } else {
     for (let featureIdx = 0; featureIdx < length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
 
       const ringStart = geomOffsets[featureIdx];
       const ringEnd = geomOffsets[featureIdx + 1];
@@ -344,6 +375,7 @@ function streamMultiLineStrings(
   data: MultiLineStringData,
   stream: GeoStream,
   sink: { setFeatureId: (id: number) => void },
+  featureIdOffset = 0,
 ): void {
   const { coords, geomOffsets, partOffsets } =
     extractMultiLineStringCoordinates(data);
@@ -353,7 +385,7 @@ function streamMultiLineStrings(
   if (separatedCoords) {
     const { x: xCoords, y: yCoords } = separatedCoords;
     for (let featureIdx = 0; featureIdx < length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
       const partStart = geomOffsets[featureIdx];
       const partEnd = geomOffsets[featureIdx + 1];
 
@@ -371,7 +403,7 @@ function streamMultiLineStrings(
     }
   } else {
     for (let featureIdx = 0; featureIdx < length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
 
       const partStart = geomOffsets[featureIdx];
       const partEnd = geomOffsets[featureIdx + 1];
@@ -408,6 +440,7 @@ function streamMultiPolygons(
   data: MultiPolygonData,
   stream: GeoStream,
   sink: { setFeatureId: (id: number) => void },
+  featureIdOffset = 0,
 ): void {
   const { coords, geomOffsets, polygonOffsets, ringOffsets } =
     extractMultiPolygonCoordinates(data);
@@ -417,7 +450,7 @@ function streamMultiPolygons(
   if (separatedCoords) {
     const { x: xCoords, y: yCoords } = separatedCoords;
     for (let featureIdx = 0; featureIdx < length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
       const polygonStart = geomOffsets[featureIdx];
       const polygonEnd = geomOffsets[featureIdx + 1];
 
@@ -444,7 +477,7 @@ function streamMultiPolygons(
     }
   } else {
     for (let featureIdx = 0; featureIdx < length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
 
       const polygonStart = geomOffsets[featureIdx];
       const polygonEnd = geomOffsets[featureIdx + 1];
@@ -540,10 +573,10 @@ export async function parseGeometryBatched(
 
   // Ensure native GeoArrow before checking data length
   const { table: resolvedInput } = ensureNativeGeoArrow(input);
-  const data = getDataFromInput(resolvedInput);
+  const { totalLength } = getDataChunksFromInput(resolvedInput);
 
   // For small datasets, use synchronous parsing
-  if (data.length <= batchSize) {
+  if (totalLength <= batchSize) {
     return parseGeometry(resolvedInput, parserOptions);
   }
 
@@ -605,8 +638,11 @@ export function parsePoints(
     );
   }
 
-  const inputData = getDataFromInput(table);
-  const coordCount = countCoordinates(inputData);
+  const { chunks, rowOffsets } = getDataChunksFromInput(table);
+  const coordCount = chunks.reduce(
+    (sum, chunk) => sum + countCoordinates(chunk),
+    0,
+  );
 
   // Pre-allocate output buffers
   const positions = new Float32Array(
@@ -620,60 +656,15 @@ export function parsePoints(
   let pointCount = 0;
 
   if (geomType === "point") {
-    // Point = FixedSizeList<Float> or Struct<x,y>
-    const coords = extractPointCoordinates(inputData as PointData);
-    const { flatCoords, dim, separatedCoords } = coords;
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const inputData = chunks[chunkIndex] as PointData;
+      const featureIdOffset = rowOffsets[chunkIndex];
+      const coords = extractPointCoordinates(inputData);
+      const { flatCoords, dim, separatedCoords } = coords;
 
-    if (separatedCoords) {
-      const { x: xCoords, y: yCoords } = separatedCoords;
-      for (let i = 0; i < inputData.length; i++) {
-        const x = xCoords[i];
-        const y = yCoords[i];
-
-        const projected = projectPoint(x, y);
-        if (
-          projected &&
-          Number.isFinite(projected[0]) &&
-          Number.isFinite(projected[1])
-        ) {
-          positions[posIdx++] = projected[0];
-          positions[posIdx++] = projected[1];
-          featureIds[pointCount++] = i;
-        }
-      }
-    } else {
-      for (let i = 0; i < inputData.length; i++) {
-        const baseIdx = i * dim;
-        const x = flatCoords[baseIdx];
-        const y = flatCoords[baseIdx + 1];
-
-        // Project through D3
-        const projected = projectPoint(x, y);
-        if (
-          projected &&
-          Number.isFinite(projected[0]) &&
-          Number.isFinite(projected[1])
-        ) {
-          positions[posIdx++] = projected[0];
-          positions[posIdx++] = projected[1];
-          featureIds[pointCount++] = i;
-        }
-      }
-    }
-  } else {
-    // MultiPoint = List<Point>
-    const { coords, geomOffsets } = extractMultiPointCoordinates(
-      inputData as MultiPointData,
-    );
-    const { flatCoords, dim, separatedCoords } = coords;
-
-    if (separatedCoords) {
-      const { x: xCoords, y: yCoords } = separatedCoords;
-      for (let featureIdx = 0; featureIdx < inputData.length; featureIdx++) {
-        const start = geomOffsets[featureIdx];
-        const end = geomOffsets[featureIdx + 1];
-
-        for (let i = start; i < end; i++) {
+      if (separatedCoords) {
+        const { x: xCoords, y: yCoords } = separatedCoords;
+        for (let i = 0; i < inputData.length; i++) {
           const x = xCoords[i];
           const y = yCoords[i];
 
@@ -685,16 +676,11 @@ export function parsePoints(
           ) {
             positions[posIdx++] = projected[0];
             positions[posIdx++] = projected[1];
-            featureIds[pointCount++] = featureIdx;
+            featureIds[pointCount++] = featureIdOffset + i;
           }
         }
-      }
-    } else {
-      for (let featureIdx = 0; featureIdx < inputData.length; featureIdx++) {
-        const start = geomOffsets[featureIdx];
-        const end = geomOffsets[featureIdx + 1];
-
-        for (let i = start; i < end; i++) {
+      } else {
+        for (let i = 0; i < inputData.length; i++) {
           const baseIdx = i * dim;
           const x = flatCoords[baseIdx];
           const y = flatCoords[baseIdx + 1];
@@ -707,7 +693,60 @@ export function parsePoints(
           ) {
             positions[posIdx++] = projected[0];
             positions[posIdx++] = projected[1];
-            featureIds[pointCount++] = featureIdx;
+            featureIds[pointCount++] = featureIdOffset + i;
+          }
+        }
+      }
+    }
+  } else {
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const inputData = chunks[chunkIndex] as MultiPointData;
+      const featureIdOffset = rowOffsets[chunkIndex];
+      const { coords, geomOffsets } = extractMultiPointCoordinates(inputData);
+      const { flatCoords, dim, separatedCoords } = coords;
+
+      if (separatedCoords) {
+        const { x: xCoords, y: yCoords } = separatedCoords;
+        for (let featureIdx = 0; featureIdx < inputData.length; featureIdx++) {
+          const start = geomOffsets[featureIdx];
+          const end = geomOffsets[featureIdx + 1];
+
+          for (let i = start; i < end; i++) {
+            const x = xCoords[i];
+            const y = yCoords[i];
+
+            const projected = projectPoint(x, y);
+            if (
+              projected &&
+              Number.isFinite(projected[0]) &&
+              Number.isFinite(projected[1])
+            ) {
+              positions[posIdx++] = projected[0];
+              positions[posIdx++] = projected[1];
+              featureIds[pointCount++] = featureIdOffset + featureIdx;
+            }
+          }
+        }
+      } else {
+        for (let featureIdx = 0; featureIdx < inputData.length; featureIdx++) {
+          const start = geomOffsets[featureIdx];
+          const end = geomOffsets[featureIdx + 1];
+
+          for (let i = start; i < end; i++) {
+            const baseIdx = i * dim;
+            const x = flatCoords[baseIdx];
+            const y = flatCoords[baseIdx + 1];
+
+            const projected = projectPoint(x, y);
+            if (
+              projected &&
+              Number.isFinite(projected[0]) &&
+              Number.isFinite(projected[1])
+            ) {
+              positions[posIdx++] = projected[0];
+              positions[posIdx++] = projected[1];
+              featureIds[pointCount++] = featureIdOffset + featureIdx;
+            }
           }
         }
       }
@@ -757,13 +796,16 @@ export function parsePolygonsToSolid(
     );
   }
 
-  const inputData = getDataFromInput(table);
-  const coordCount = countCoordinates(inputData);
+  const { chunks, rowOffsets, totalLength } = getDataChunksFromInput(table);
+  const coordCount = chunks.reduce(
+    (sum, chunk) => sum + countCoordinates(chunk),
+    0,
+  );
 
   // Create polygon sink
   const sink = createPolygonSink({
     initialCoordCapacity: Math.ceil(coordCount * capacityMultiplier),
-    initialPathCapacity: Math.ceil(inputData.length * 2 * capacityMultiplier), // More rings than features
+    initialPathCapacity: Math.ceil(totalLength * 2 * capacityMultiplier), // More rings than features
     debug,
     debugSampleLimit,
   });
@@ -782,15 +824,25 @@ export function parsePolygonsToSolid(
     stream = rewind.stream(projectedStream);
   }
 
-  // Stream geometries through D3
-  if (geomType === "polygon") {
-    streamPolygonsWithPolygonSink(inputData as PolygonData, stream, sink);
-  } else {
-    streamMultiPolygonsWithPolygonSink(
-      inputData as MultiPolygonData,
-      stream,
-      sink,
-    );
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    const inputData = chunks[chunkIndex];
+    const featureIdOffset = rowOffsets[chunkIndex];
+
+    if (geomType === "polygon") {
+      streamPolygonsWithPolygonSink(
+        inputData as PolygonData,
+        stream,
+        sink,
+        featureIdOffset,
+      );
+    } else {
+      streamMultiPolygonsWithPolygonSink(
+        inputData as MultiPolygonData,
+        stream,
+        sink,
+        featureIdOffset,
+      );
+    }
   }
 
   return sink.finalize();
@@ -803,6 +855,7 @@ function streamPolygonsWithPolygonSink(
   data: PolygonData,
   stream: GeoStream,
   sink: { setFeatureId: (id: number) => void },
+  featureIdOffset = 0,
 ): void {
   const { coords, geomOffsets, ringOffsets } = extractPolygonCoordinates(data);
   const { flatCoords, dim, separatedCoords } = coords;
@@ -810,7 +863,7 @@ function streamPolygonsWithPolygonSink(
   if (separatedCoords) {
     const { x: xCoords, y: yCoords } = separatedCoords;
     for (let featureIdx = 0; featureIdx < data.length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
 
       const ringStart = geomOffsets[featureIdx];
       const ringEnd = geomOffsets[featureIdx + 1];
@@ -833,7 +886,7 @@ function streamPolygonsWithPolygonSink(
     }
   } else {
     for (let featureIdx = 0; featureIdx < data.length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
 
       const ringStart = geomOffsets[featureIdx];
       const ringEnd = geomOffsets[featureIdx + 1];
@@ -868,6 +921,7 @@ function streamMultiPolygonsWithPolygonSink(
   data: MultiPolygonData,
   stream: GeoStream,
   sink: { setFeatureId: (id: number) => void },
+  featureIdOffset = 0,
 ): void {
   const { coords, geomOffsets, polygonOffsets, ringOffsets } =
     extractMultiPolygonCoordinates(data);
@@ -876,7 +930,7 @@ function streamMultiPolygonsWithPolygonSink(
   if (separatedCoords) {
     const { x: xCoords, y: yCoords } = separatedCoords;
     for (let featureIdx = 0; featureIdx < data.length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
 
       const polygonStart = geomOffsets[featureIdx];
       const polygonEnd = geomOffsets[featureIdx + 1];
@@ -907,7 +961,7 @@ function streamMultiPolygonsWithPolygonSink(
     }
   } else {
     for (let featureIdx = 0; featureIdx < data.length; featureIdx++) {
-      sink.setFeatureId(featureIdx);
+      sink.setFeatureId(featureIdOffset + featureIdx);
 
       const polygonStart = geomOffsets[featureIdx];
       const polygonEnd = geomOffsets[featureIdx + 1];

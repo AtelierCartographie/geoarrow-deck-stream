@@ -1,6 +1,6 @@
 {
   "name": "geoarrow-deck-stream",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "High-performance GeoArrow to Deck.gl binary parser using d3-geo streaming",
   "type": "module",
   "main": "dist/index.js",
