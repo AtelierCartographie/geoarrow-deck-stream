@@ -98,6 +98,7 @@ export {
   parsePoints,
   parsePolygonsToSolid,
   getLayerType,
+  parseSphere,
   type GeometryTypeString,
   type LayerType,
   // Backward compatibility aliases

@@ -270,6 +270,18 @@
         <input type="checkbox" id="rewind">
         <label for="rewind">Rewind Polygons (RHR)</label>
       </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="showSphere" checked>
+        <label for="showSphere">Show sphere</label>
+      </div>
+      <div class="control-group" id="sphereModeGroup">
+        <label>Sphere render mode</label>
+        <select id="sphereMode">
+          <option value="polygon" selected>Filled (SolidPolygonLayer)</option>
+          <option value="path">Outline (PathLayer)</option>
+        </select>
+      </div>
       
       <div class="checkbox-group">
         <input type="checkbox" id="enableLogging">

@@ -1035,3 +1035,64 @@ export function getLayerType(geomType: GeometryTypeString): LayerType {
       return "path"; // Default fallback
   }
 }
+
+// =============================================================================
+// SPHERE GENERATOR
+// =============================================================================
+
+/**
+ * Generate the projection sphere boundary as binary data for Deck.gl.
+ *
+ * Uses D3's `sphere()` stream event to project the globe outline (or full
+ * sphere surface) through the given projection, writing directly to binary
+ * buffers — no GeoJSON, no intermediate objects.
+ *
+ * The sphere boundary is projection-specific:
+ * - Orthographic → circle (visible hemisphere)
+ * - Mercator → wide flat rectangle
+ * - Equal Earth / Natural Earth → characteristic oval outline
+ * - Identity → full [-180,-90, 180,90] extent
+ *
+ * @param projection - D3 projection (fully configured with scale/translate/rotate)
+ * @param options.output - 'path' for PathLayer (outline only), 'polygon' for SolidPolygonLayer (filled background)
+ * @returns BinaryPathData when output='path', BinaryPolygonData when output='polygon'
+ *
+ * @example
+ * ```typescript
+ * const projection = geoOrthographic().rotate([-10, -40]).translate([512, 384]).scale(250);
+ *
+ * // Sphere outline (PathLayer)
+ * const outline = parseSphere(projection, { output: 'path' });
+ * new PathLayer({ ...createPathLayerProps(outline), getColor: [100, 200, 255] });
+ *
+ * // Sphere fill (SolidPolygonLayer, rendered behind data)
+ * const fill = parseSphere(projection, { output: 'polygon' });
+ * new SolidPolygonLayer({ ...createSolidPolygonLayerProps(fill), getFillColor: [20, 40, 80] });
+ * ```
+ */
+export function parseSphere(
+  projection: ParserOptions["projection"],
+  options: { output?: "path" | "polygon" } = {},
+): BinaryPathData | BinaryPolygonData {
+  const { output = "path" } = options;
+
+  if (output === "polygon") {
+    const sink = createPolygonSink({
+      initialCoordCapacity: 2048,
+      initialPathCapacity: 4,
+    });
+    sink.setFeatureId(0);
+    const stream = projection.stream(sink);
+    stream.sphere?.();
+    return sink.finalize();
+  } else {
+    const sink = createBinarySink({
+      initialCoordCapacity: 2048,
+      initialPathCapacity: 4,
+    });
+    sink.setFeatureId(0);
+    const stream = projection.stream(sink);
+    stream.sphere?.();
+    return sink.finalize();
+  }
+}

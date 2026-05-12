@@ -30,6 +30,7 @@ import {
   parseGeometryWithStats,
   parsePoints,
   parsePolygonsToSolid,
+  parseSphere,
   // Layer props helpers
   createScatterplotLayerProps,
   createTextLayerProps,
@@ -521,7 +522,39 @@ function parseAndRender() {
     document.getElementById('stats').style.display = 'block';
     
     // Render layer
-    const layers = [layer];
+    const layers = [];
+
+    // Sphere layer (rendered first, as background)
+    const showSphere = document.getElementById('showSphere')?.checked;
+    if (showSphere) {
+      try {
+        const sphereMode = document.getElementById('sphereMode')?.value ?? 'polygon';
+        const sphereData = parseSphere(projection, { output: sphereMode });
+        if (sphereMode === 'polygon') {
+          const sphereProps = createSolidPolygonLayerProps(sphereData);
+          layers.push(new SolidPolygonLayer({
+            id: 'sphere-polygon',
+            ...sphereProps,
+            getFillColor: [20, 40, 80, 220],
+            _normalize: false
+          }));
+        } else {
+          const sphereProps = createPathLayerProps(sphereData);
+          layers.push(new PathLayer({
+            id: 'sphere-path',
+            ...sphereProps,
+            getColor: [80, 160, 255, 200],
+            getWidth: 2,
+            widthMinPixels: 1
+          }));
+        }
+        log('🌐 Sphere layer added in', sphereMode, 'mode');
+      } catch (sphereErr) {
+        warn('⚠️ Sphere generation failed:', sphereErr.message);
+      }
+    }
+
+    layers.push(layer);
     if (borderLayer) {
       layers.push(borderLayer);
     }
@@ -678,6 +711,14 @@ document.getElementById('enableLogging').addEventListener('change', (e) => {
   if (e.target.checked) {
     console.log('✅ Logging enabled');
   }
+});
+
+// Sphere controls
+document.getElementById('showSphere').addEventListener('change', () => {
+  if (currentTable) parseAndRender();
+});
+document.getElementById('sphereMode').addEventListener('change', () => {
+  if (currentTable) parseAndRender();
 });
 
 // Initialize
