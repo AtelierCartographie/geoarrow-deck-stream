@@ -62,5 +62,10 @@
     "@deck.gl/core": ">=9.0.0",
     "@deck.gl/layers": ">=9.0.0",
     "@geoarrow/geoarrow-js": ">=0.3.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
