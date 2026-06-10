@@ -268,6 +268,69 @@ function signedArea(data: Float32Array, start: number, end: number): number {
   return area * 0.5;
 }
 
+/** A ring range in the positions buffer (point indices) with its signed area. */
+type ClassifiedRing = { start: number; end: number; area: number };
+
+/** One output polygon: an exterior ring and the holes it contains. */
+type PolygonGroup = { exterior: ClassifiedRing; holes: ClassifiedRing[] };
+
+// Ray-casting point-in-ring test on the projected (planar) coordinates.
+function pointInRing(
+  data: Float32Array,
+  start: number,
+  end: number,
+  x: number,
+  y: number
+): boolean {
+  let inside = false;
+  for (let i = start, j = end - 1; i < end; j = i++) {
+    const xi = data[i * 2];
+    const yi = data[i * 2 + 1];
+    const xj = data[j * 2];
+    const yj = data[j * 2 + 1];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * Find the polygon group whose exterior contains the hole.
+ *
+ * Clip cut points lie exactly on exterior boundaries, where ray casting is
+ * unreliable, so several sample vertices of the hole are tried until one
+ * lands strictly inside an exterior. When exteriors are nested the smallest
+ * containing one wins. Returns null for holes no exterior contains
+ * (clipped-away artifacts).
+ */
+function findContainingGroup(
+  groups: PolygonGroup[],
+  data: Float32Array,
+  hole: ClassifiedRing
+): PolygonGroup | null {
+  const pointCount = hole.end - hole.start;
+  const samples = [
+    hole.start,
+    hole.start + (pointCount >> 1),
+    hole.start + (pointCount >> 2)
+  ];
+  for (const sample of new Set(samples)) {
+    const x = data[sample * 2];
+    const y = data[sample * 2 + 1];
+    let best: PolygonGroup | null = null;
+    for (const group of groups) {
+      const exterior = group.exterior;
+      if (!pointInRing(data, exterior.start, exterior.end, x, y)) continue;
+      if (!best || Math.abs(exterior.area) < Math.abs(best.exterior.area)) {
+        best = group;
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
 /**
  * Extended sink for polygon support (future use)
  * Tracks rings and holes for SolidPolygonLayer compatibility
@@ -308,6 +371,7 @@ export function createPolygonSink(config: BinarySinkConfig = {}): BinaryPolygonS
   let inPolygon = false;
   let inRing = false;
   let ringStartPosition = 0;
+  let bundleStartPosition = 0;
   let pointsInRing = 0;
   
   // Track rings for the current polygon being processed
@@ -363,92 +427,111 @@ export function createPolygonSink(config: BinarySinkConfig = {}): BinaryPolygonS
   function polygonStart(): void {
     inPolygon = true;
     currentRings = [];
+    bundleStartPosition = positionIndex;
   }
-  
+
   function polygonEnd(): void {
     if (!inPolygon) return;
-    
-    if (currentRings.length === 0) {
-      inPolygon = false;
+    inPolygon = false;
+
+    if (currentRings.length === 0) return;
+
+    const positionsArr = positions.raw as Float32Array;
+
+    const rings: ClassifiedRing[] = currentRings.map((ring) => ({
+      start: ring.start,
+      end: ring.end,
+      area: signedArea(positionsArr, ring.start, ring.end)
+    }));
+
+    // D3's clip stage emits rejoined (cut) rings after untouched ones, so the
+    // first ring of a clipped polygon can be a hole or a degenerate sliver —
+    // "first ring = exterior" does NOT hold here. The exterior winding sign is
+    // taken from the net signed area of the whole bundle instead: exterior
+    // rings always outweigh the holes they contain.
+    let netArea = 0;
+    for (const ring of rings) netArea += ring.area;
+    const refSign = Math.sign(netArea);
+
+    const exteriors: ClassifiedRing[] = [];
+    const holes: ClassifiedRing[] = [];
+    if (refSign !== 0) {
+      for (const ring of rings) {
+        if (ring.area === 0) continue; // degenerate clip sliver
+        (Math.sign(ring.area) === refSign ? exteriors : holes).push(ring);
+      }
+    }
+
+    if (exteriors.length === 0) {
+      // Nothing fillable — drop the bundle's coordinates entirely.
+      positionIndex = bundleStartPosition;
+      positions.length = bundleStartPosition;
       return;
     }
 
-    // Process rings to handle Split Polygons (Multiple Exteriors)
-    const positionsArr = positions.raw as Float32Array;
-    
-    // Determine the "Exterior" winding sign from the first ring.
-    // D3 convention: First ring is Exterior.
-    // Note: We use Math.sign. If area is exactly 0, it might be tricky, but we filtered degenerate rings.
-    const firstRing = currentRings[0];
-    const firstArea = signedArea(positionsArr, firstRing.start, firstRing.end);
-    const refSign = Math.sign(firstArea);
-
-    // Group rings into [Exterior, Hole, Hole, ...] bundles
-    // Each bundle becomes a formal Polygon in the output.
-    
-    let currentPolyStart = -1;
-    let currentPolyHoles: number[] = []; // Offsets relative to start
-    let currentPolyEnd = -1;
-
-    const emitCurrentPoly = () => {
-      if (currentPolyStart !== -1) {
-        // Record Global Outputs for this Polygon component
-        polygonIndices.push(currentPolyStart);
-        featureIds.push(currentFeatureId);
-        polygonCount++;
-
-        // Triangulate
-        const polyCoords = positionsArr.subarray(
-            currentPolyStart * 2,
-            currentPolyEnd * 2
-        );
-        const triangles = earcut(polyCoords, currentPolyHoles, 2);
-        
-        // Store indices
-        for (let i = 0; i < triangles.length; i++) {
-            triangleIndices.push(triangles[i] + currentPolyStart);
-        }
-      }
-    };
-
-    for (let i = 0; i < currentRings.length; i++) {
-        const ring = currentRings[i];
-        const area = signedArea(positionsArr, ring.start, ring.end);
-        
-        // If it matches the reference sign (and isn't zero/ambiguous), it's a new Exterior.
-        // Exception: The very first ring is always the start of the first polygon.
-        const isExterior = (i === 0) || (area !== 0 && Math.sign(area) === refSign);
-
-        if (isExterior) {
-            // Emit previous polygon if exists
-            emitCurrentPoly();
-            
-            // Start new polygon
-            currentPolyStart = ring.start;
-            currentPolyEnd = ring.end; // Will extend as holes are added
-            currentPolyHoles = [];
-            
-            // Record this ring's start in global holeIndices (it is the valid exterior ring)
-            holeIndices.push(ring.start);
-        } else {
-            // It is a hole for the current polygon
-            if (currentPolyStart !== -1) {
-                // Extend the boundary of the current polygon used for triangulation slice
-                currentPolyEnd = ring.end;
-                
-                // Record global hole index
-                holeIndices.push(ring.start);
-                
-                // Record local hole offset for earcut
-                currentPolyHoles.push(ring.start - currentPolyStart);
-            }
-        }
+    const groups: PolygonGroup[] = exteriors.map((exterior) => ({
+      exterior,
+      holes: []
+    }));
+    for (const hole of holes) {
+      // A hole no exterior contains is a clip artifact and is dropped.
+      findContainingGroup(groups, positionsArr, hole)?.holes.push(hole);
     }
 
-    // Emit the last polygon component
-    emitCurrentPoly();
+    const ordered: ClassifiedRing[] = [];
+    for (const group of groups) {
+      ordered.push(group.exterior, ...group.holes);
+    }
 
-    inPolygon = false;
+    // Earcut and the binary layout need each polygon's rings contiguous as
+    // [exterior, holes...]. When the emission order differs (or rings were
+    // dropped), rewrite the bundle's slice of the positions buffer in
+    // canonical order; otherwise keep the zero-copy fast path.
+    const isCanonical =
+      ordered.length === rings.length &&
+      ordered.every((ring, i) => ring.start === rings[i].start);
+    if (!isCanonical) {
+      const snapshot = positionsArr.slice(bundleStartPosition, positionIndex);
+      let write = bundleStartPosition;
+      for (const ring of ordered) {
+        const floatLength = (ring.end - ring.start) * 2;
+        const srcOffset = ring.start * 2 - bundleStartPosition;
+        positionsArr.set(
+          snapshot.subarray(srcOffset, srcOffset + floatLength),
+          write
+        );
+        ring.start = write / 2;
+        ring.end = ring.start + floatLength / 2;
+        write += floatLength;
+      }
+      positionIndex = write;
+      positions.length = write;
+    }
+
+    for (const group of groups) {
+      const polyStart = group.exterior.start;
+      const lastRing =
+        group.holes.length > 0
+          ? group.holes[group.holes.length - 1]
+          : group.exterior;
+
+      polygonIndices.push(polyStart);
+      featureIds.push(currentFeatureId);
+      polygonCount++;
+
+      holeIndices.push(group.exterior.start);
+      const holeOffsets: number[] = [];
+      for (const hole of group.holes) {
+        holeIndices.push(hole.start);
+        holeOffsets.push(hole.start - polyStart);
+      }
+
+      const polyCoords = positionsArr.subarray(polyStart * 2, lastRing.end * 2);
+      const triangles = earcut(polyCoords, holeOffsets, 2);
+      for (let i = 0; i < triangles.length; i++) {
+        triangleIndices.push(triangles[i] + polyStart);
+      }
+    }
   }
   
   function setFeatureId(id: number): void {
@@ -513,6 +596,7 @@ export function createPolygonSink(config: BinarySinkConfig = {}): BinaryPolygonS
     inPolygon = false;
     inRing = false;
     ringStartPosition = 0;
+    bundleStartPosition = 0;
     pointsInRing = 0;
     currentRings = [];
   }
