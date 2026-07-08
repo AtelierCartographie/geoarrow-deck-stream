@@ -39,7 +39,7 @@ WKB input (`geoarrow.wkb`) is **transparently decoded** — all parse functions 
 For explicit control, you can also decode WKB manually:
 
 ```typescript
-import { decodeWkbColumn, isWkbGeometryColumn } from "geoarrow-deck-stream";
+import { decodeWkbColumn, isWkbGeometryColumn } from "@ateliercartographie/geoarrow-deck-stream";
 
 // Check if table has WKB geometry
 if (isWkbGeometryColumn(table)) {
@@ -65,7 +65,7 @@ import {
   isWGS84,
   getProjectionStrategy,
   extractCRSFromArrow,
-} from "geoarrow-deck-stream";
+} from "@ateliercartographie/geoarrow-deck-stream";
 import { geoMercator, geoIdentity } from "d3-geo";
 
 // 1. Quick Check (Most Common)
@@ -91,7 +91,7 @@ if (info.crsInfo?.isWGS84) {
 ## Installation
 
 ```bash
-npm install geoarrow-deck-stream d3-geo earcut
+npm install @ateliercartographie/geoarrow-deck-stream d3-geo earcut
 ```
 
 ## Quick Start
@@ -100,7 +100,7 @@ npm install geoarrow-deck-stream d3-geo earcut
 import {
   parsePolygonsToSolid,
   createSolidPolygonLayerProps,
-} from "geoarrow-deck-stream";
+} from "@ateliercartographie/geoarrow-deck-stream";
 import { geoOrthographic } from "d3-geo";
 import { SolidPolygonLayer } from "@deck.gl/layers";
 
@@ -130,7 +130,7 @@ const layer = new SolidPolygonLayer({
 Since [v1.33.1-dev41](https://github.com/duckdb/duckdb-wasm/pull/2200), DuckDB-WASM natively returns geometry columns as `geoarrow.wkb`. The library handles this transparently — no special handling needed:
 
 ```typescript
-import { parsePolygonsToSolid } from "geoarrow-deck-stream";
+import { parsePolygonsToSolid } from "@ateliercartographie/geoarrow-deck-stream";
 import { geoEqualEarth } from "d3-geo";
 
 const db = await AsyncDuckDB.create(/* ... */);
@@ -178,7 +178,7 @@ import {
   PRESET_LAYOUTS,
   TERRITORY_BOUNDS,
   createInsetBorderData,
-} from "geoarrow-deck-stream";
+} from "@ateliercartographie/geoarrow-deck-stream";
 import { geoConicConformal, geoMercator } from "d3-geo";
 
 // 1. Build a composite projection
@@ -533,9 +533,9 @@ Uses `rollup` to generate a single ESM file (`dist/geoarrow-deck-stream.min.mjs`
 
 **Bundle Stats:**
 
-- Minified: ~43 KB
-- Gzipped: ~14 KB
+- Minified: ~68 KB
+- Gzipped: ~22 KB
 
 ## License
 
-MIT
+ISC
