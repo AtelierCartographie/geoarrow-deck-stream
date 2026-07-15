@@ -9,8 +9,16 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js"
+    },
+    "./parse-worker": {
+      "types": "./dist/parse-worker.d.ts",
+      "import": "./dist/parse-worker.js"
     }
   },
   "files": [

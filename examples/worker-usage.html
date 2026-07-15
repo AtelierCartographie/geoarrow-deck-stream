@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>geoarrow-deck-stream — worker parsing demo</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 46rem; }
+      pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
+      .spinner { display: inline-block; animation: spin 1s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <h1>Off-main-thread parsing demo</h1>
+    <p>
+      Parses <code>fr-com2025-wgs84.arrow</code> (34 879 communes) to
+      SolidPolygonLayer binary data, on the main thread then in a worker.
+      The spinner <span class="spinner">◐</span> freezes whenever the main
+      thread is blocked.
+    </p>
+    <pre id="log">loading…</pre>
+    <script type="module" src="./worker-usage.js"></script>
+  </body>
+</html>
