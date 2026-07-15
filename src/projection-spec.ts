@@ -51,8 +51,14 @@ import {
  * A factory returning a fresh, unconfigured projection instance.
  * This is the standard d3 style: `geoConicConformal` is a factory,
  * `geoConicConformal()` is an instance.
+ *
+ * Custom factories may accept the spec's `params` value (structured-cloneable)
+ * to build parameterized projections that the fixed spec fields cannot
+ * describe (e.g. a proj4 definition string, a composite layout).
  */
-export type ProjectionFactory = () => GeoProjection | ProjectionLike;
+export type ProjectionFactory = (
+  params?: unknown,
+) => GeoProjection | ProjectionLike;
 
 /**
  * Registry mapping factory names to factories.
@@ -76,6 +82,12 @@ export interface SimpleProjectionSpec {
    * e.g. `"geoConicConformal"`, `"geoBertin1953"`, or a custom id.
    */
   projection: string;
+
+  /**
+   * Structured-cloneable argument forwarded to the registry factory.
+   * Only meaningful for custom factories registered to accept it.
+   */
+  params?: unknown;
 
   /** `.rotate([λ, φ])` or `.rotate([λ, φ, γ])` */
   rotate?: [number, number] | [number, number, number];
@@ -256,7 +268,7 @@ function resolveSimpleSpec(
     );
   }
 
-  const instance = factory();
+  const instance = factory(spec.params);
   if (!instance || typeof (instance as ProjectionLike).stream !== 'function') {
     throw new Error(
       `Registry entry "${spec.projection}" did not produce a projection ` +

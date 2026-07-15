@@ -237,6 +237,28 @@ describe("parse worker client ↔ handler", () => {
     expect(borders.positions.length).toBe(5 * 2); // one rectangle
   });
 
+  it("reuses the memoized projection across same-spec requests and rebuilds on spec change", async () => {
+    const client = createParseWorkerClient(createLoopbackWorker());
+    const bytes = loadArrowBytes("linestrings.interleaved.arrow");
+
+    const first = await client.parseGeometry(bytes, FRANCE_SPEC);
+    const second = await client.parseGeometry(bytes, { ...FRANCE_SPEC });
+    expect(Array.from(second.positions)).toEqual(Array.from(first.positions));
+
+    const shifted = await client.parseGeometry(bytes, {
+      ...FRANCE_SPEC,
+      scale: 1400,
+    });
+    expect(Array.from(shifted.positions)).not.toEqual(
+      Array.from(first.positions),
+    );
+
+    const backToFirst = await client.parseGeometry(bytes, FRANCE_SPEC);
+    expect(Array.from(backToFirst.positions)).toEqual(
+      Array.from(first.positions),
+    );
+  });
+
   it("passes parser options through (rewind)", async () => {
     const client = createParseWorkerClient(createLoopbackWorker());
     const bytes = loadArrowBytes("polygons.interleaved.arrow");

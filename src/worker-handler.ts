@@ -72,12 +72,29 @@ export function createParseMessageHandler(options: ParseWorkerOptions = {}) {
     ...options.projections,
   };
 
+  // Spec resolution can be expensive (composite projections rebuild and fit
+  // every sub-projection), and consecutive requests typically share the same
+  // spec — memoize the last resolution. Single-entry on purpose: projections
+  // are stateful stream factories, so unbounded caching would pin memory
+  // without helping the sequential request pattern.
+  let lastSpecKey: string | null = null;
+  let lastProjection: ReturnType<typeof resolveProjectionSpec> | null = null;
+
+  function resolveSpecCached(spec: ParseRequest['spec']) {
+    const specKey = JSON.stringify(spec);
+    if (lastProjection === null || specKey !== lastSpecKey) {
+      lastProjection = resolveProjectionSpec(spec, registry);
+      lastSpecKey = specKey;
+    }
+    return lastProjection;
+  }
+
   return function handleParseRequest(request: ParseRequest): {
     response: ParseResponse;
     transfer: ArrayBuffer[];
   } {
     try {
-      const projection = resolveProjectionSpec(request.spec, registry);
+      const projection = resolveSpecCached(request.spec);
       const parserOptions: ParserOptions = {
         projection,
         ...request.options,
