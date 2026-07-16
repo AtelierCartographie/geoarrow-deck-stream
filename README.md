@@ -19,6 +19,7 @@ This module provides a **zero-serialization pipeline** for transforming GeoArrow
 - 🌐 **Full Geometry Support**: Points, LineStrings, Polygons (with holes), Multi-geometries
 - 🌪️ **Spherical Winding**: Automatic correction of ring direction (Rewind / Right-Hand Rule) using `d3-geo`
 - 🔺 **Integrated Triangulation**: Uses `earcut` internally to perform triangulation for `SolidPolygonLayer`
+- 🧵 **Off-main-thread parsing**: Web Worker API with serializable projection specs and transferable outputs — see [Off-Main-Thread Parsing](#off-main-thread-parsing-web-worker)
 
 ## Supported Input Formats
 
@@ -216,6 +217,109 @@ const borderLayer = new PathLayer({
   getColor: [0, 0, 0, 128],
 });
 ```
+
+## Off-Main-Thread Parsing (Web Worker)
+
+The whole pipeline — Arrow IPC decode, d3 projection stream, binary sink and
+earcut triangulation — can run in a Web Worker so the main thread (and your
+UI) never freezes. On a demanding basemap (France, 34 879 communes, 849k
+coordinates), the longest main-thread block drops from ~2 s to ~15 ms, with
+bit-identical output.
+
+Inputs (Arrow IPC bytes) cross the thread boundary as a single structured
+clone (or a zero-copy transfer with `transferInput: true`); output TypedArrays
+are always **transferred** back, never copied.
+
+Because d3 projections are closures, they cannot be posted to a worker.
+Instead the worker API takes a **serializable projection spec** — the factory
+*name* plus its parameters, aligned with the `D3Usage` format of
+[`proj-suggest`](https://github.com/AtelierCartographie/proj-suggest):
+
+```typescript
+// Main thread
+import { createParseWorkerClient } from "@ateliercartographie/geoarrow-deck-stream/worker";
+
+const worker = new Worker(
+  new URL("./parse.worker.ts", import.meta.url),
+  { type: "module" },
+);
+const client = createParseWorkerClient(worker);
+
+const solid = await client.parsePolygonsToSolid(ipcBytes, {
+  projection: "geoConicConformal",
+  rotate: [-3, 0],
+  center: [0, 46.5],
+  parallels: [44, 49],
+  fitExtent: { extent: [[0, 0], [960, 600]], bbox: [-5.5, 41, 10, 51.5] },
+});
+// → feed straight to SolidPolygonLayer via createSolidPolygonLayerProps(solid)
+```
+
+```typescript
+// parse.worker.ts — standard d3-geo projections only? Two lines:
+import { setupParseWorker } from "@ateliercartographie/geoarrow-deck-stream/worker";
+setupParseWorker();
+```
+
+If you only need d3-geo projections you can skip the worker file entirely and
+point the Worker at the shipped entry
+`@ateliercartographie/geoarrow-deck-stream/parse-worker`.
+
+### Exotic projections (d3-geo-projection, d3-geo-polygon, custom)
+
+Extend the worker-side registry — any factory name becomes valid in specs:
+
+```typescript
+// parse.worker.ts
+import * as d3GeoProjection from "d3-geo-projection";
+import { geoInterrupt } from "d3-geo-polygon";
+import { geoMollweideRaw } from "d3-geo-projection";
+import {
+  setupParseWorker,
+  createProjectionRegistry,
+} from "@ateliercartographie/geoarrow-deck-stream/worker";
+
+setupParseWorker({
+  projections: createProjectionRegistry(d3GeoProjection, {
+    // custom assembly under a custom id
+    mollweideOceans: () => geoInterrupt(geoMollweideRaw, [/* lobes */]).rotate([-200, 0]),
+  }),
+});
+
+// main thread: { projection: "geoBertin1953" } or { projection: "mollweideOceans" }
+```
+
+### Composite projections in a worker
+
+Pass a `type: 'composite'` spec — same shape as `buildCompositeProjection`
+config, with each entry's projection described as a spec:
+
+```typescript
+const spec = {
+  type: "composite",
+  width: 960,
+  height: 600,
+  entries: [
+    {
+      id: "mainland",
+      projection: { projection: "geoConicConformal", parallels: [44, 49], rotate: [-3, 0] },
+      bounds: [-5.5, 41, 10, 51.5],
+      layout: { x: 0.2, y: 0, width: 0.8, height: 1 },
+    },
+    // ... insets
+  ],
+} as const;
+
+const solid = await client.parsePolygonsToSolid(ipcBytes, spec);
+const borders = await client.insetBorders(spec); // PathLayer-ready frames
+```
+
+The client also exposes `parseGeometry`, `parsePoints` and `parseSphere`.
+`resolveProjectionSpec(spec, registry?)` is available on both sides if you
+want to resolve a spec to a live projection yourself.
+
+See [examples/worker-usage.html](examples/worker-usage.html) for a runnable
+before/after demo.
 
 ## Architecture
 
