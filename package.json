@@ -33,6 +33,7 @@
     "dev": "tsc --watch",
     "preview": "vite examples --port 8000",
     "test": "vitest run --watch=false",
+    "bench:memory": "tsc && node --expose-gc bench/worker-memory.mjs",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },

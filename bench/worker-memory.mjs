@@ -2,7 +2,7 @@
  * Worker memory bench — peak vs retained heap of the parse worker.
  *
  *   npm run build && node --expose-gc bench/worker-memory.mjs [--features 60000] [--segments 40]
- *        [--encoding wkb|native] [--batch-rows 2048] [--snapshot file.heapsnapshot]
+ *        [--encoding wkb|native] [--batch-rows 2048] [--snapshot file.heapsnapshot] [--dist dir]
  *        [--methods parseGeometry,parsePolygonsToSolid]
  *
  * Mirrors how Khartis drives the worker: Arrow IPC bytes are *cloned* into a
@@ -28,7 +28,6 @@ import {
   Table,
   tableToIPC,
 } from 'apache-arrow';
-import { decodeWkbColumn } from '../dist/wkb-reader.js';
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, arr) => {
@@ -43,6 +42,9 @@ const METHODS = (args.methods ?? 'parseGeometry,parsePolygonsToSolid').split(','
 // DuckDB(-WASM) emits record batches of 2048 rows; Khartis' tables keep that layout.
 const BATCH_ROWS = Number(args['batch-rows'] ?? 2048);
 const SAMPLE_MS = 5;
+// Build directory to bench (compare branches: build one elsewhere, pass --dist).
+const DIST = new URL(`${args.dist ?? '../dist'}/`, args.dist ? `file://${process.cwd()}/` : import.meta.url);
+const { decodeWkbColumn } = await import(new URL('wkb-reader.js', DIST).href);
 
 const MB = (n) => (n / 1048576).toFixed(0).padStart(6);
 
@@ -110,7 +112,7 @@ const { parentPort } = require('node:worker_threads');
 const v8 = require('node:v8');
 (async () => {
   const { createParseMessageHandler } = await import(${JSON.stringify(
-    new URL('../dist/worker-handler.js', import.meta.url).href,
+    new URL('worker-handler.js', DIST).href,
   )});
   const handle = createParseMessageHandler();
   const snap = () => {

@@ -49,7 +49,16 @@ export interface WorkerParseOptions extends SerializableParserOptions {
   /**
    * Transfer the input IPC buffer to the worker instead of copying it.
    * Zero-copy, but DETACHES the caller's buffer (it becomes unusable).
-   * Only applies when the input is Uint8Array/ArrayBuffer.
+   *
+   * Only applies when the input is Uint8Array/ArrayBuffer (a Table input is
+   * serialized by the client into bytes nobody else holds, so those are
+   * always transferred). What gets transferred is the *whole* underlying
+   * `ArrayBuffer`, not just the view's range, so the caller must guarantee:
+   * - nothing reads that buffer afterwards — no cache entry (e.g. a
+   *   WeakMap from table to IPC bytes), no other pending request;
+   * - the bytes are not a view into a larger buffer still in use (a pool,
+   *   a WASM memory, a file read shared with other data);
+   * - it is not a SharedArrayBuffer (not transferable; it is cloned).
    * @default false
    */
   transferInput?: boolean;
@@ -113,10 +122,11 @@ interface Pending {
   reject: (reason: Error) => void;
 }
 
-function toIPCBytes(input: WorkerGeometryInput): Uint8Array {
-  if (input instanceof Table) return tableToIPC(input);
-  if (input instanceof ArrayBuffer) return new Uint8Array(input);
-  return input;
+function toIPCBytes(input: WorkerGeometryInput): { ipc: Uint8Array; owned: boolean } {
+  // Bytes serialized here belong to this request alone: safe to transfer.
+  if (input instanceof Table) return { ipc: tableToIPC(input), owned: true };
+  if (input instanceof ArrayBuffer) return { ipc: new Uint8Array(input), owned: false };
+  return { ipc: input, owned: false };
 }
 
 /**
@@ -174,9 +184,9 @@ export function createParseWorkerClient(worker: WorkerLike): ParseWorkerClient {
 
     const transfer: ArrayBuffer[] = [];
     if (input !== undefined) {
-      const ipc = toIPCBytes(input);
+      const { ipc, owned } = toIPCBytes(input);
       request.ipc = ipc;
-      if (transferInput && ipc.buffer instanceof ArrayBuffer) {
+      if ((owned || transferInput) && ipc.buffer instanceof ArrayBuffer) {
         transfer.push(ipc.buffer);
       }
     }

@@ -227,8 +227,15 @@ coordinates), the longest main-thread block drops from ~2 s to ~15 ms, with
 bit-identical output.
 
 Inputs (Arrow IPC bytes) cross the thread boundary as a single structured
-clone (or a zero-copy transfer with `transferInput: true`); output TypedArrays
-are always **transferred** back, never copied.
+clone (or a zero-copy transfer with `transferInput: true`, which detaches the
+whole underlying `ArrayBuffer`: only use it on bytes nothing else keeps, e.g.
+not ones cached for a later request). A `Table` input is serialized by the
+client and always transferred. Output TypedArrays are always **transferred**
+back, never copied.
+
+Worker memory can be measured with `npm run bench:memory` (peak and retained
+heap of the worker for 60 000 polygons / 9.7 M vertices, see
+`bench/worker-memory.mjs` for options).
 
 Because d3 projections are closures, they cannot be posted to a worker.
 Instead the worker API takes a **serializable projection spec** — the factory
