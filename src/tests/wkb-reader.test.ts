@@ -20,6 +20,7 @@ import {
   RecordBatch,
   makeData,
   Binary,
+  LargeBinary,
   Struct,
   vectorFromArray,
 } from 'apache-arrow';
@@ -202,8 +203,10 @@ function buildWkbTable(
   wkbs: (Uint8Array | null)[],
   columnName = 'geometry',
   attributes: Record<string, readonly unknown[]> = {},
+  { large = false }: { large?: boolean } = {},
 ): Table {
   const n = wkbs.length;
+  const binaryType = large ? new LargeBinary() : new Binary();
 
   // Build Binary column offsets and value buffer
   const offsets = new Int32Array(n + 1);
@@ -230,15 +233,15 @@ function buildWkbTable(
   }
 
   const binaryData = makeData({
-    type: new Binary(),
+    type: binaryType,
     length: n,
     nullCount,
     nullBitmap,
-    valueOffsets: offsets,
+    valueOffsets: large ? BigInt64Array.from(offsets, BigInt) : offsets,
     data: valueBuffer,
-  });
+  } as any);
 
-  const geomField = new Field(columnName, new Binary(), true);
+  const geomField = new Field(columnName, binaryType, true);
   const fields: Field[] = [geomField];
   const columns: any[] = [binaryData];
 
@@ -616,6 +619,78 @@ describe('WKB Integration - parseGeometry pipeline', () => {
       const counted = chunks.reduce((sum, chunk) => sum + countCoordinates(chunk), 0);
       expect(counted).toBe(total);
     }
+  });
+
+  it('streams WKB in place with the same output as decoding it to GeoArrow first', () => {
+    const square = (o: number): [number, number][] => [[o, o], [o + 4, o], [o + 4, o + 4], [o, o + 4], [o, o]];
+    const hole = (o: number): [number, number][] => [[o + 1, o + 1], [o + 1, o + 2], [o + 2, o + 2], [o + 1, o + 1]];
+    const plain = (result: object) =>
+      JSON.stringify(result, (_, v) => (ArrayBuffer.isView(v) ? Array.from(v as Float32Array) : v));
+    const projection = () => geoIdentity().reflectY(true) as any;
+
+    const cases: Array<{ wkbs: (Uint8Array | null)[]; parsers: Array<(t: Table) => object> }> = [
+      {
+        // Polygon + MultiPolygon (promotion), holes, null, other-type row,
+        // big-endian, empty polygon, degenerate ring.
+        wkbs: [
+          wkbPolygon([square(0), hole(0)]),
+          null,
+          wkbMultiPolygon([[square(10)], [square(20), hole(20)]]),
+          wkbLineString([[0, 0], [1, 1]]),
+          wkbPolygon([square(30)], false),
+          wkbPolygon([]),
+          wkbPolygon([square(40), [[41, 41], [42, 42], [41, 41]]]),
+        ],
+        parsers: [
+          (t) => parseGeometry(t, { projection: projection() }),
+          (t) => parsePolygonsToSolid(t, { projection: projection() }),
+          (t) => parsePolygonsToSolid(t, { projection: projection(), rewind: false }),
+        ],
+      },
+      {
+        // Plain Polygon column: empty rows still emit an (empty) polygon.
+        wkbs: [wkbPolygon([square(0)]), null, wkbPolygon([square(5), hole(5)], false), wkbPoint(1, 1)],
+        parsers: [(t) => parsePolygonsToSolid(t, { projection: projection() })],
+      },
+      {
+        wkbs: [
+          wkbLineString([[0, 0], [1, 1], [2, 0]]),
+          wkbMultiLineString([[[5, 5], [6, 6]], [[7, 7]], [[8, 8], [9, 9]]]),
+          null,
+          wkbLineString([[3, 3]], false),
+        ],
+        parsers: [(t) => parseGeometry(t, { projection: projection() })],
+      },
+      {
+        wkbs: [wkbPoint(1, 2), null, wkbMultiPoint([[3, 4], [5, 6]]), wkbPoint(7, 8, false)],
+        parsers: [(t) => parsePoints(t, { projection: projection() })],
+      },
+    ];
+
+    for (const { wkbs, parsers } of cases) {
+      const table = splitTableIntoTwoBatches(buildWkbTable(wkbs));
+      const decoded = decodeWkbColumn(table).table;
+      for (const parse of parsers) {
+        expect(plain(parse(table))).toBe(plain(parse(decoded)));
+      }
+    }
+  });
+
+  it('detects and parses LargeBinary WKB columns', () => {
+    const square: [number, number][] = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]];
+    const wkbs = [wkbPolygon([square]), null, wkbPolygon([square])];
+    const large = buildWkbTable(wkbs, 'geometry', {}, { large: true });
+    const binary = buildWkbTable(wkbs);
+    const identity = () => geoIdentity() as any;
+
+    expect(isWkbGeometryColumn(large)).toBe(true);
+    expect(detectGeometryType(large)).toBe('wkb');
+    expect(decodeWkbColumn(large).geometryType).toBe('polygon');
+    const fromLarge = parsePolygonsToSolid(large, { projection: identity() });
+    const fromBinary = parsePolygonsToSolid(binary, { projection: identity() });
+    expect(fromLarge.length).toBe(2);
+    expect(Array.from(fromLarge.positions)).toEqual(Array.from(fromBinary.positions));
+    expect(Array.from(fromLarge.featureIds)).toEqual([0, 2]);
   });
 
   it('should parse Polygon WKBs through parsePolygonsToSolid', () => {

@@ -105,7 +105,7 @@ export function detectGeometryType(
   if (!geomField?.metadata) {
     // Fallback: check if the column is Binary type (e.g., DuckDB WASM ST_AsWKB output)
     const typeId = geomField?.type?.typeId;
-    if (typeId === 4 /* Binary */ || typeId === 13 /* LargeBinary */) {
+    if (typeId === Type.Binary || typeId === Type.LargeBinary) {
       return 'wkb';
     }
     return 'unknown';
@@ -115,7 +115,7 @@ export function detectGeometryType(
   if (!extensionName) {
     // Fallback: check if the column is Binary type
     const typeId = geomField.type?.typeId;
-    if (typeId === 4 /* Binary */ || typeId === 13 /* LargeBinary */) {
+    if (typeId === Type.Binary || typeId === Type.LargeBinary) {
       return 'wkb';
     }
     return 'unknown';

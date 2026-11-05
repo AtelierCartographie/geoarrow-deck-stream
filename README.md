@@ -29,15 +29,15 @@ The library accepts Apache Arrow tables with geometry columns in three formats:
 | ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | **GeoArrow Interleaved** | `geoarrow.point`, `geoarrow.linestring`, etc. | Coordinates as `[x,y,x,y,...]` in a single `Float64Array`. Default in DuckDB-WASM, GeoParquet. |
 | **GeoArrow Separated**   | Same as above                                 | Coordinates as separate `x[]` and `y[]` arrays (Apache Arrow Struct encoding).                 |
-| **GeoArrow WKB**         | `geoarrow.wkb`                                | Well-Known Binary blobs in a `Binary` column. Auto-decoded to native GeoArrow before parsing.  |
+| **GeoArrow WKB**         | `geoarrow.wkb`                                | Well-Known Binary blobs in a `Binary` / `LargeBinary` column. Streamed in place, no conversion. |
 
 All geometry types are supported: **Point**, **MultiPoint**, **LineString**, **MultiLineString**, **Polygon** (with holes), **MultiPolygon**.
 
 ### WKB Support
 
-WKB input (`geoarrow.wkb`) is **transparently decoded** — all parse functions (`parseGeometry`, `parsePoints`, `parsePolygonsToSolid`) detect WKB columns and convert them to native GeoArrow automatically. No additional code is needed.
+WKB input (`geoarrow.wkb`) is **handled transparently** — all parse functions (`parseGeometry`, `parsePoints`, `parsePolygonsToSolid`) detect WKB columns and stream the coordinates straight from the WKB bytes into the projection, without converting them to native GeoArrow first (no intermediate coordinate buffer: WKB input costs about the same memory as native GeoArrow). No additional code is needed.
 
-For explicit control, you can also decode WKB manually:
+To get a native GeoArrow table (e.g. to keep it, or for other tools), you can also decode WKB explicitly:
 
 ```typescript
 import { decodeWkbColumn, isWkbGeometryColumn } from "@ateliercartographie/geoarrow-deck-stream";
