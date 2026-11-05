@@ -31,6 +31,7 @@ import {
   parsePoints,
   parsePolygonsToSolid,
   detectGeometryType,
+  countCoordinates,
 } from '../index.js';
 
 // =============================================================================
@@ -591,6 +592,30 @@ describe('WKB Integration - parseGeometry pipeline', () => {
     expect(result.positions[1]).toBeCloseTo(48.85);
     expect(result.positions[2]).toBeCloseTo(4.83);
     expect(result.positions[3]).toBeCloseTo(45.76);
+  });
+
+  it('should count each multi-batch chunk\'s own coordinates, not the shared child', () => {
+    // decodeWkbColumn slices one decoded vector per batch; list slices keep the
+    // whole coordinate child, so counting the child length would multiply the
+    // total by the number of batches (and buffers are sized from this count).
+    const square: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]];
+    const hole: [number, number][] = [[0.2, 0.2], [0.4, 0.2], [0.4, 0.4], [0.2, 0.2]];
+    const cases = [
+      { wkbs: [wkbLineString([[0, 0], [1, 1]]), wkbLineString([[0, 0], [1, 1], [2, 2]]), wkbLineString([[3, 3], [4, 4]])], total: 7 },
+      { wkbs: [wkbPolygon([square, hole]), wkbPolygon([square]), wkbPolygon([square])], total: 19 },
+      { wkbs: [wkbPolygon([square]), wkbMultiPolygon([[square, hole], [square]]), wkbPolygon([square])], total: 24 },
+      { wkbs: [wkbMultiLineString([[[0, 0], [1, 1]], [[2, 2], [3, 3]]]), wkbMultiLineString([[[0, 0], [1, 1]]]), wkbMultiLineString([[[5, 5], [6, 6], [7, 7]]])], total: 9 },
+      { wkbs: [wkbMultiPoint([[0, 0], [1, 1]]), wkbMultiPoint([[2, 2]]), wkbMultiPoint([[3, 3], [4, 4], [5, 5]])], total: 6 },
+      { wkbs: [wkbPoint(0, 0), wkbPoint(1, 1), wkbPoint(2, 2)], total: 3 },
+    ];
+
+    for (const { wkbs, total } of cases) {
+      const { table } = decodeWkbColumn(splitTableIntoTwoBatches(buildWkbTable(wkbs)));
+      const chunks = table.getChild('geometry')!.data as any[];
+      expect(chunks.length).toBe(2);
+      const counted = chunks.reduce((sum, chunk) => sum + countCoordinates(chunk), 0);
+      expect(counted).toBe(total);
+    }
   });
 
   it('should parse Polygon WKBs through parsePolygonsToSolid', () => {

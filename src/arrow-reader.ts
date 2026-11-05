@@ -319,32 +319,56 @@ export function extractMultiPolygonCoordinates(dataInput: MultiPolygonData): {
 // =============================================================================
 
 /**
- * Count total coordinates in the geometry data
+ * Resolve `offsets[index]` through each nested offsets buffer in turn.
+ */
+function resolveOffset(index: number, levels: Int32Array[]): number {
+  let value = index;
+  for (const offsets of levels) value = offsets[value];
+  return value;
+}
+
+/**
+ * Count the coordinates referenced by the rows of this geometry chunk.
+ *
+ * Counted through the offsets rather than the length of the coordinate child:
+ * slicing a list-typed Arrow `Data` (e.g. one record batch of a larger
+ * vector, as `decodeWkbColumn` produces) keeps the *whole* child and only
+ * narrows the offsets, so the child length would count every coordinate of
+ * the full vector once per chunk.
  */
 export function countCoordinates(input: SupportedGeometryData): number {
   if (data.isPointData(input)) {
-    const coords = extractPointCoordinates(input);
-    return coords.coordCount;
+    // FixedSizeList children are sliced along with their parent.
+    return input.length;
   }
-  if (data.isMultiPointData(input)) {
-    const { coords } = extractMultiPointCoordinates(input);
-    return coords.coordCount;
-  }
-  if (data.isLineStringData(input)) {
-    const { coords } = extractLineStringCoordinates(input);
-    return coords.coordCount;
+  if (data.isMultiPointData(input) || data.isLineStringData(input)) {
+    return countNested(input.length, input.valueOffsets, []);
   }
   if (data.isPolygonData(input)) {
-    const { coords } = extractPolygonCoordinates(input);
-    return coords.coordCount;
+    const { geomOffsets, ringOffsets } = extractPolygonCoordinates(input);
+    return countNested(input.length, geomOffsets, [ringOffsets]);
   }
   if (data.isMultiLineStringData(input)) {
-    const { coords } = extractMultiLineStringCoordinates(input);
-    return coords.coordCount;
+    const { geomOffsets, partOffsets } = extractMultiLineStringCoordinates(input);
+    return countNested(input.length, geomOffsets, [partOffsets]);
   }
   if (data.isMultiPolygonData(input)) {
-    const { coords } = extractMultiPolygonCoordinates(input);
-    return coords.coordCount;
+    const { geomOffsets, polygonOffsets, ringOffsets } =
+      extractMultiPolygonCoordinates(input);
+    return countNested(input.length, geomOffsets, [polygonOffsets, ringOffsets]);
   }
   throw new Error('Unsupported geometry type');
+}
+
+/** Coordinates spanned by rows [0, length), resolved through nested offsets. */
+function countNested(
+  length: number,
+  geomOffsets: Int32Array,
+  levels: Int32Array[],
+): number {
+  if (length <= 0 || geomOffsets.length <= length) return 0;
+  return (
+    resolveOffset(geomOffsets[length], levels) -
+    resolveOffset(geomOffsets[0], levels)
+  );
 }
