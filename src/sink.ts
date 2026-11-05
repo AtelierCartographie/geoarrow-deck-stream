@@ -194,7 +194,12 @@ export function createBinarySink(config: BinarySinkConfig = {}): IBinarySink {
   }
 
   /**
-   * Finalize and return trimmed arrays ready for Deck.gl
+   * Finalize and return trimmed arrays ready for Deck.gl.
+   *
+   * Ownership of the data moves to the returned object: the sink's buffers
+   * are released (call reset() before reusing the sink). Projections cache
+   * the last stream they wrapped, so a sink kept alive that way must not pin
+   * its full-capacity buffers.
    */
   function finalize(): BinaryPathData {
     // Add sentinel value for last path end (required by Deck.gl)
@@ -203,9 +208,9 @@ export function createBinarySink(config: BinarySinkConfig = {}): IBinarySink {
     
     return {
       length: state.pathCount,
-      positions: positions.toArray() as any as Float32Array,
-      startIndices: startIndices.toArray() as any as Uint32Array,
-      featureIds: (featureIds.toArray() as any as Uint32Array).subarray(0, state.pathCount),
+      positions: positions.take() as Float32Array,
+      startIndices: startIndices.take() as Uint32Array,
+      featureIds: featureIds.take() as Uint32Array,
       size: 2
     };
   }
@@ -549,9 +554,18 @@ export function createPolygonSink(config: BinarySinkConfig = {}): BinaryPolygonS
     };
   }
   
+  /**
+   * Finalize and return trimmed arrays ready for Deck.gl. Like the path
+   * sink, ownership moves to the result and the sink's buffers are released.
+   */
   function finalize(): BinaryPolygonData {
     // If no polygons were emitted, return empty but valid structure
     if (polygonCount === 0) {
+      positions.take();
+      polygonIndices.take();
+      holeIndices.take();
+      featureIds.take();
+      triangleIndices.take();
       return {
         length: 0,
         positions: new Float32Array(),
@@ -574,11 +588,11 @@ export function createPolygonSink(config: BinarySinkConfig = {}): BinaryPolygonS
     
     return {
       length: polygonCount,
-      positions: positions.toArray() as any as Float32Array,
-      polygonIndices: polygonIndices.toArray() as any as Uint32Array,
-      holeIndices: holeIndices.toArray() as any as Uint32Array,
-      featureIds: (featureIds.toArray() as any as Uint32Array).subarray(0, polygonCount),
-      indices: triangleIndices.toArray() as any as Uint32Array,
+      positions: positions.take() as Float32Array,
+      polygonIndices: polygonIndices.take() as Uint32Array,
+      holeIndices: holeIndices.take() as Uint32Array,
+      featureIds: featureIds.take() as Uint32Array,
+      indices: triangleIndices.take() as Uint32Array,
       size: 2
     };
   }

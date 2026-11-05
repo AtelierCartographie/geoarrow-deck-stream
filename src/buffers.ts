@@ -64,8 +64,9 @@ export class GrowableBuffer<T extends TypedArray = Uint32Array> {
   ensureCapacity(minCapacity: number): void {
     if (minCapacity <= this.buffer.length) return;
     
-    // Calculate new capacity with growth factor
-    let newCapacity = this.buffer.length;
+    // Calculate new capacity with growth factor (a zero-capacity buffer,
+    // e.g. after take(), restarts from a small floor instead of looping)
+    let newCapacity = Math.max(this.buffer.length, 16);
     while (newCapacity < minCapacity) {
       newCapacity = Math.ceil(newCapacity * this.growthFactor);
     }
@@ -112,6 +113,21 @@ export class GrowableBuffer<T extends TypedArray = Uint32Array> {
    */
   toArray(): T {
     return this.buffer.slice(0, this._length) as T;
+  }
+
+  /**
+   * Hand the written data over to the caller and detach it from this buffer.
+   *
+   * Returns a trimmed copy of the used portion, then drops the backing buffer
+   * (the GrowableBuffer restarts empty). Anything still holding the
+   * GrowableBuffer — e.g. a d3 projection that caches the last stream it
+   * wrapped — then no longer pins the full-capacity allocation.
+   */
+  take(): T {
+    const out = this.buffer.slice(0, this._length) as T;
+    this.buffer = new this.ArrayConstructor(0) as T;
+    this._length = 0;
+    return out;
   }
 
   /**
