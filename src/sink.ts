@@ -54,9 +54,9 @@ const DEFAULT_CONFIG: Required<BinarySinkConfig> = {
 export function createBinarySink(config: BinarySinkConfig = {}): IBinarySink {
   const cfg = { ...DEFAULT_CONFIG, ...config };
   
-  let positions = new GrowableBuffer(Float32Array, cfg.initialCoordCapacity * 2) as any;
-  let startIndices = new GrowableBuffer(Uint32Array, cfg.initialPathCapacity) as any;
-  let featureIds = new GrowableBuffer(Uint32Array, cfg.initialPathCapacity) as any;
+  const positions = new GrowableBuffer<Float32Array>(Float32Array, cfg.initialCoordCapacity * 2);
+  const startIndices = new GrowableBuffer<Uint32Array>(Uint32Array, cfg.initialPathCapacity);
+  const featureIds = new GrowableBuffer<Uint32Array>(Uint32Array, cfg.initialPathCapacity);
   const debugSample: number[] = [];
   let degeneratePaths = 0;
   let invalidPoints = 0;
@@ -128,10 +128,7 @@ export function createBinarySink(config: BinarySinkConfig = {}): IBinarySink {
       // Degenerate path (single point) - remove from positions buffer
       // This happens when a line crosses projection boundaries and only
       // a tiny fragment is visible
-      positions.reset();
-      // Rebuild to the lineStartPosition
-      const tempLength = state.lineStartPosition;
-      positions = rebuildToLength(positions as GrowableBuffer<Float32Array>, tempLength) as any;
+      positions.length = state.lineStartPosition;
       state.positionIndex = state.lineStartPosition;
       degeneratePaths++;
     }
@@ -187,9 +184,9 @@ export function createBinarySink(config: BinarySinkConfig = {}): IBinarySink {
    */
   function getBuffers() {
     return {
-      positions: positions.raw as any as Float32Array,
-      startIndices: startIndices.raw as any as Uint32Array,
-      featureIds: featureIds.raw as any as Uint32Array
+      positions: positions.raw,
+      startIndices: startIndices.raw,
+      featureIds: featureIds.raw
     };
   }
 
@@ -208,9 +205,9 @@ export function createBinarySink(config: BinarySinkConfig = {}): IBinarySink {
     
     return {
       length: state.pathCount,
-      positions: positions.take() as Float32Array,
-      startIndices: startIndices.take() as Uint32Array,
-      featureIds: featureIds.take() as Uint32Array,
+      positions: positions.take(),
+      startIndices: startIndices.take(),
+      featureIds: featureIds.take(),
       size: 2
     };
   }
@@ -246,23 +243,6 @@ export function createBinarySink(config: BinarySinkConfig = {}): IBinarySink {
     reset
   };
 }
-
-/**
- * Helper to rebuild a buffer to a specific length
- * Used when removing degenerate paths
- */
-function rebuildToLength(
-  buffer: GrowableBuffer<Float32Array>, 
-  targetLength: number
-): GrowableBuffer<Float32Array> {
-  const newBuffer = new GrowableBuffer(Float32Array, buffer.capacity) as any;
-  const source = buffer.raw;
-  for (let i = 0; i < targetLength; i++) {
-    newBuffer.push(source[i]);
-  }
-  return newBuffer;
-}
-
 
 // Helper for signed area (Shoelace formula)
 function signedArea(data: Float32Array, start: number, end: number): number {
@@ -356,12 +336,12 @@ export function createPolygonSink(config: BinarySinkConfig = {}): BinaryPolygonS
   const cfg = { ...DEFAULT_CONFIG, ...config };
   cfg.minPointsPerPath = 3; // Polygons need at least 3 points
   
-  let positions = new GrowableBuffer(Float32Array, cfg.initialCoordCapacity * 2) as any;
-  let polygonIndices = new GrowableBuffer(Uint32Array, cfg.initialPathCapacity) as any;
-  let holeIndices = new GrowableBuffer(Uint32Array, cfg.initialPathCapacity * 4) as any; // More rings than polygons
-  let featureIds = new GrowableBuffer(Uint32Array, cfg.initialPathCapacity) as any;
+  const positions = new GrowableBuffer<Float32Array>(Float32Array, cfg.initialCoordCapacity * 2);
+  const polygonIndices = new GrowableBuffer<Uint32Array>(Uint32Array, cfg.initialPathCapacity);
+  const holeIndices = new GrowableBuffer<Uint32Array>(Uint32Array, cfg.initialPathCapacity * 4); // More rings than polygons
+  const featureIds = new GrowableBuffer<Uint32Array>(Uint32Array, cfg.initialPathCapacity);
   // Buffer for triangle indices (Uint32Array to support large vertex counts)
-  let triangleIndices = new GrowableBuffer(Uint32Array, cfg.initialCoordCapacity * 3) as any;
+  const triangleIndices = new GrowableBuffer<Uint32Array>(Uint32Array, cfg.initialCoordCapacity * 3);
   
   const debugSample: number[] = [];
   let degeneratePaths = 0;
@@ -441,7 +421,7 @@ export function createPolygonSink(config: BinarySinkConfig = {}): BinaryPolygonS
 
     if (currentRings.length === 0) return;
 
-    const positionsArr = positions.raw as Float32Array;
+    const positionsArr = positions.raw;
 
     const rings: ClassifiedRing[] = currentRings.map((ring) => ({
       start: ring.start,
@@ -588,11 +568,11 @@ export function createPolygonSink(config: BinarySinkConfig = {}): BinaryPolygonS
     
     return {
       length: polygonCount,
-      positions: positions.take() as Float32Array,
-      polygonIndices: polygonIndices.take() as Uint32Array,
-      holeIndices: holeIndices.take() as Uint32Array,
-      featureIds: featureIds.take() as Uint32Array,
-      indices: triangleIndices.take() as Uint32Array,
+      positions: positions.take(),
+      polygonIndices: polygonIndices.take(),
+      holeIndices: holeIndices.take(),
+      featureIds: featureIds.take(),
+      indices: triangleIndices.take(),
       size: 2
     };
   }

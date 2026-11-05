@@ -118,13 +118,22 @@ export class GrowableBuffer<T extends TypedArray = Uint32Array> {
   /**
    * Hand the written data over to the caller and detach it from this buffer.
    *
-   * Returns a trimmed copy of the used portion, then drops the backing buffer
-   * (the GrowableBuffer restarts empty). Anything still holding the
-   * GrowableBuffer — e.g. a d3 projection that caches the last stream it
-   * wrapped — then no longer pins the full-capacity allocation.
+   * When the unused tail is at most `maxSlack` of the capacity, returns a
+   * view on the backing buffer (no copy: the tail rides along, e.g. in a
+   * worker transfer); otherwise returns a trimmed copy so a mostly-empty
+   * allocation is not kept alive. Either way the backing buffer is dropped
+   * and the GrowableBuffer restarts empty, so later writes cannot alias the
+   * returned array, and anything still holding the GrowableBuffer — e.g. a
+   * d3 projection that caches the last stream it wrapped — no longer pins
+   * the allocation.
    */
-  take(): T {
-    const out = this.buffer.slice(0, this._length) as T;
+  take(maxSlack: number = 1 / 16): T {
+    const capacity = this.buffer.length;
+    const out = (
+      capacity - this._length <= capacity * maxSlack
+        ? this.buffer.subarray(0, this._length)
+        : this.buffer.slice(0, this._length)
+    ) as T;
     this.buffer = new this.ArrayConstructor(0) as T;
     this._length = 0;
     return out;

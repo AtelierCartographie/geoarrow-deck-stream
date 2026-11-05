@@ -22,6 +22,7 @@ import {
   parsePolygonsToSolid,
   parsePoints,
   createBinarySink,
+  createPolygonSink,
   createPathLayerProps,
   createSolidPolygonLayerProps,
   calculateBounds,
@@ -104,6 +105,26 @@ describe("GrowableBuffer", () => {
     expect(result.length).toBe(3);
     expect(result).toEqual(new Float32Array([1, 2, 3]));
   });
+
+  it("take() hands the data over and restarts empty (view and copy paths)", () => {
+    // Nearly full → view on the backing buffer; mostly empty → trimmed copy.
+    for (const [capacity, written] of [[4, 4], [100, 3]]) {
+      const buffer = new GrowableBuffer(Float32Array, capacity);
+      for (let i = 0; i < written; i++) buffer.push(i + 1);
+
+      const taken = buffer.take();
+      expect(Array.from(taken)).toEqual(
+        Array.from({ length: written }, (_, i) => i + 1),
+      );
+      expect(buffer.length).toBe(0);
+      expect(buffer.capacity).toBe(0);
+
+      // Writing again (growing from zero capacity) must not alias `taken`.
+      for (let i = 0; i < 40; i++) buffer.push(-1);
+      expect(buffer.length).toBe(40);
+      expect(taken[0]).toBe(1);
+    }
+  });
 });
 
 // =============================================================================
@@ -163,6 +184,62 @@ describe("BinarySink", () => {
     const result = sink.finalize();
 
     expect(result.length).toBe(0);
+  });
+
+  it("should drop a degenerate path between valid ones", () => {
+    const sink = createBinarySink();
+
+    sink.setFeatureId(0);
+    sink.lineStart();
+    sink.point(1, 2);
+    sink.point(3, 4);
+    sink.lineEnd();
+    sink.setFeatureId(1);
+    sink.lineStart();
+    sink.point(99, 99); // degenerate: removed from positions
+    sink.lineEnd();
+    sink.setFeatureId(2);
+    sink.lineStart();
+    sink.point(5, 6);
+    sink.point(7, 8);
+    sink.lineEnd();
+
+    const result = sink.finalize();
+
+    expect(result.length).toBe(2);
+    expect(result.positions).toEqual(new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]));
+    expect(Array.from(result.startIndices)).toEqual([0, 2, 4]);
+    expect(Array.from(result.featureIds)).toEqual([0, 2]);
+  });
+
+  it("should not alias a finalized result when reused after reset", () => {
+    const square = (o: number) => [[o, o], [o + 1, o], [o + 1, o + 1], [o, o + 1]];
+    const feed = (sink: ReturnType<typeof createPolygonSink>, o: number) => {
+      sink.setFeatureId(o);
+      sink.polygonStart();
+      sink.lineStart();
+      for (const [x, y] of square(o)) sink.point(x, y);
+      sink.lineEnd();
+      sink.polygonEnd();
+    };
+    // Capacities sized exactly, so finalize returns views (no copy).
+    const sink = createPolygonSink({ initialCoordCapacity: 4, initialPathCapacity: 1 });
+    feed(sink, 0);
+    const first = sink.finalize();
+    const snapshot = {
+      positions: Array.from(first.positions),
+      indices: Array.from(first.indices),
+      polygonIndices: Array.from(first.polygonIndices),
+    };
+
+    sink.reset();
+    feed(sink, 10);
+    const second = sink.finalize();
+
+    expect(Array.from(first.positions)).toEqual(snapshot.positions);
+    expect(Array.from(first.indices)).toEqual(snapshot.indices);
+    expect(Array.from(first.polygonIndices)).toEqual(snapshot.polygonIndices);
+    expect(second.positions[0]).toBe(10);
   });
 
   it("should skip invalid coordinates", () => {
