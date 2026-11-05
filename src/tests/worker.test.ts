@@ -185,6 +185,27 @@ describe("parse worker client ↔ handler", () => {
     expect(Array.from(viaWorker.positions)).toEqual(Array.from(direct.positions));
   });
 
+  it("transfers IPC it serialized itself, and clones caller bytes unless transferInput", async () => {
+    const transfers: unknown[][] = [];
+    const loopback = createLoopbackWorker();
+    const worker = {
+      ...loopback,
+      postMessage(message: unknown, transfer?: unknown[]) {
+        transfers.push(transfer ?? []);
+        loopback.postMessage(message);
+      },
+    } as WorkerLike;
+    const client = createParseWorkerClient(worker);
+    const bytes = loadArrowBytes("polygons.interleaved.arrow");
+
+    await client.parseGeometry(tableFromIPC(bytes), FRANCE_SPEC);
+    await client.parseGeometry(bytes, FRANCE_SPEC);
+    await client.parseGeometry(bytes.slice(), FRANCE_SPEC, { transferInput: true });
+
+    expect(transfers.map((t) => t.length)).toEqual([1, 0, 1]);
+    expect(bytes.byteLength).toBeGreaterThan(0); // caller's bytes untouched
+  });
+
   it("round-trips WKB tables (DuckDB-wasm path)", async () => {
     const client = createParseWorkerClient(createLoopbackWorker());
     const bytes = loadArrowBytes("polygons.wkb.arrow");

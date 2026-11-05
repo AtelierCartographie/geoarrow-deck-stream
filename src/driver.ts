@@ -15,7 +15,14 @@ import { geoIdentity } from "d3-geo";
 import type { GeoStream } from "d3-geo";
 import type { Vector, Table } from "apache-arrow";
 
-import { decodeWkbColumn } from "./wkb-reader.js";
+import {
+  openWkbColumn,
+  countWkbCoordinates,
+  streamWkbPaths,
+  streamWkbSolidPolygons,
+  forEachWkbPoint,
+  type WkbColumn,
+} from "./wkb-stream.js";
 
 import type {
   LineStringData,
@@ -81,7 +88,7 @@ export function parseGeometry(
   input: GeometryInput,
   options: ParserOptions,
 ): BinaryPathData {
-  return runParse(input, options, false).data;
+  return runParse(openGeometrySource(input), options, false).data;
 }
 
 // Aliases for backward compatibility
@@ -99,17 +106,11 @@ export function parseGeometryWithStats(
 ): { data: BinaryPathData; stats: ParseStats; debug?: SinkDebugInfo } {
   const startTime = performance.now();
 
-  // Ensure native GeoArrow before extracting stats
-  const { table: resolvedTable } = ensureNativeGeoArrow(input);
-
-  const { chunks, totalLength } = getDataChunksFromInput(resolvedTable);
-  const inputCoords = chunks.reduce(
-    (sum, chunk) => sum + countCoordinates(chunk),
-    0,
-  );
+  const source = openGeometrySource(input);
+  const { totalLength, coordCount: inputCoords } = source;
 
   const { data: outputData, debug } = runParse(
-    resolvedTable,
+    source,
     options,
     !!options.debug,
   );
@@ -160,42 +161,57 @@ function getDataChunksFromInput(
 }
 
 /**
- * If the table has a WKB geometry column, decode it to native GeoArrow.
- * Returns the (possibly converted) table and the resolved geometry type.
+ * Where the geometry of a table is read from: a WKB column streamed in place
+ * (no conversion to native GeoArrow, so no intermediate coordinate buffer),
+ * or native GeoArrow chunks.
  */
-function ensureNativeGeoArrow(table: Table): {
-  table: Table;
+type GeometrySource = {
   geomType: ReturnType<typeof detectGeometryType>;
-} {
-  let geomType = detectGeometryType(table);
+  /** Rows (= feature ids) in the table. */
+  totalLength: number;
+  /** Coordinates held by the geometry, to size the output buffers. */
+  coordCount: number;
+} & (
+  | { kind: "wkb"; column: WkbColumn }
+  | { kind: "native"; chunks: SupportedGeometryData[]; rowOffsets: number[] }
+);
+
+function openGeometrySource(table: Table): GeometrySource {
+  const geomType = detectGeometryType(table);
   if (geomType === "wkb") {
-    const { table: convertedTable, geometryType } = decodeWkbColumn(table);
-    return { table: convertedTable, geomType: geometryType as typeof geomType };
+    const column = openWkbColumn(table);
+    return {
+      kind: "wkb",
+      column,
+      geomType: column.geomType,
+      totalLength: column.numRows,
+      coordCount: countWkbCoordinates(column),
+    };
   }
-  return { table, geomType };
+  if (geomType === "unknown") {
+    return { kind: "native", geomType, chunks: [], rowOffsets: [], totalLength: 0, coordCount: 0 };
+  }
+  const { chunks, rowOffsets, totalLength } = getDataChunksFromInput(table);
+  const coordCount = chunks.reduce(
+    (sum, chunk) => sum + countCoordinates(chunk),
+    0,
+  );
+  return { kind: "native", geomType, chunks, rowOffsets, totalLength, coordCount };
 }
 
 function runParse(
-  inputTable: Table,
+  source: GeometrySource,
   options: ParserOptions,
   collectDebug: boolean,
 ): { data: BinaryPathData; debug?: SinkDebugInfo } {
   const { projection, capacityMultiplier = 1.5, debugSampleLimit } = options;
-
-  // Ensure native GeoArrow (convert WKB if needed)
-  const { table, geomType } = ensureNativeGeoArrow(inputTable);
+  const { geomType, totalLength, coordCount } = source;
 
   if (geomType === "unknown" || geomType === "wkb") {
     throw new Error(
       "Unsupported geometry type or missing ARROW:extension:name metadata",
     );
   }
-
-  const { chunks, rowOffsets, totalLength } = getDataChunksFromInput(table);
-  const coordCount = chunks.reduce(
-    (sum, chunk) => sum + countCoordinates(chunk),
-    0,
-  );
 
   const sizes = estimateBufferSizes(coordCount, totalLength, false);
 
@@ -211,6 +227,12 @@ function runParse(
 
   // Connect projection to sink via D3's stream API
   const stream = projection.stream(sink);
+
+  if (source.kind === "wkb") {
+    streamWkbPaths(source.column, stream, sink);
+  }
+  const { chunks, rowOffsets } =
+    source.kind === "native" ? source : { chunks: [], rowOffsets: [] };
 
   for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
     const inputData = chunks[chunkIndex];
@@ -571,18 +593,14 @@ export async function parseGeometryBatched(
 ): Promise<BinaryPathData> {
   const { batchSize = 10000, onProgress, ...parserOptions } = options;
 
-  // Ensure native GeoArrow before checking data length
-  const { table: resolvedInput } = ensureNativeGeoArrow(input);
-  const { totalLength } = getDataChunksFromInput(resolvedInput);
-
   // For small datasets, use synchronous parsing
-  if (totalLength <= batchSize) {
-    return parseGeometry(resolvedInput, parserOptions);
+  if (input.numRows <= batchSize) {
+    return parseGeometry(input, parserOptions);
   }
 
   // TODO: Implement true batch processing with chunk merging
   // For now, fall back to synchronous (still efficient due to TypedArrays)
-  const result = parseGeometry(resolvedInput, parserOptions);
+  const result = parseGeometry(input, parserOptions);
   onProgress?.(1);
   return result;
 }
@@ -629,7 +647,8 @@ export function parsePoints(
   options: ParserOptions,
 ): BinaryPointData {
   const { projection, capacityMultiplier = 1.5 } = options;
-  const { table, geomType } = ensureNativeGeoArrow(inputTable);
+  const source = openGeometrySource(inputTable);
+  const { geomType, coordCount } = source;
   const projectPoint = createPointProjector(projection);
 
   if (geomType !== "point" && geomType !== "multipoint") {
@@ -637,12 +656,6 @@ export function parsePoints(
       `parsePoints requires Point or MultiPoint geometry, got: ${geomType}`,
     );
   }
-
-  const { chunks, rowOffsets } = getDataChunksFromInput(table);
-  const coordCount = chunks.reduce(
-    (sum, chunk) => sum + countCoordinates(chunk),
-    0,
-  );
 
   // Pre-allocate output buffers
   const positions = new Float32Array(
@@ -655,7 +668,21 @@ export function parsePoints(
   let posIdx = 0;
   let pointCount = 0;
 
-  if (geomType === "point") {
+  if (source.kind === "wkb") {
+    forEachWkbPoint(source.column, (x, y, featureId) => {
+      const projected = projectPoint(x, y);
+      if (
+        projected &&
+        Number.isFinite(projected[0]) &&
+        Number.isFinite(projected[1])
+      ) {
+        positions[posIdx++] = projected[0];
+        positions[posIdx++] = projected[1];
+        featureIds[pointCount++] = featureId;
+      }
+    });
+  } else if (geomType === "point") {
+    const { chunks, rowOffsets } = source;
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       const inputData = chunks[chunkIndex] as PointData;
       const featureIdOffset = rowOffsets[chunkIndex];
@@ -699,6 +726,7 @@ export function parsePoints(
       }
     }
   } else {
+    const { chunks, rowOffsets } = source;
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       const inputData = chunks[chunkIndex] as MultiPointData;
       const featureIdOffset = rowOffsets[chunkIndex];
@@ -783,7 +811,8 @@ export function parsePolygonsToSolid(
     debugSampleLimit,
     rewind,
   } = options;
-  const { table, geomType } = ensureNativeGeoArrow(inputTable);
+  const source = openGeometrySource(inputTable);
+  const { geomType, totalLength, coordCount } = source;
 
   // Default rewind logic:
   // - use explicit option if provided
@@ -795,12 +824,6 @@ export function parsePolygonsToSolid(
       `parsePolygonsToSolid requires Polygon or MultiPolygon geometry, got: ${geomType}`,
     );
   }
-
-  const { chunks, rowOffsets, totalLength } = getDataChunksFromInput(table);
-  const coordCount = chunks.reduce(
-    (sum, chunk) => sum + countCoordinates(chunk),
-    0,
-  );
 
   // Create polygon sink
   const sink = createPolygonSink({
@@ -823,6 +846,12 @@ export function parsePolygonsToSolid(
     const rewind = createRewindStream(true);
     stream = rewind.stream(projectedStream);
   }
+
+  if (source.kind === "wkb") {
+    streamWkbSolidPolygons(source.column, stream, sink);
+  }
+  const { chunks, rowOffsets } =
+    source.kind === "native" ? source : { chunks: [], rowOffsets: [] };
 
   for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
     const inputData = chunks[chunkIndex];

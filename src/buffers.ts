@@ -64,8 +64,9 @@ export class GrowableBuffer<T extends TypedArray = Uint32Array> {
   ensureCapacity(minCapacity: number): void {
     if (minCapacity <= this.buffer.length) return;
     
-    // Calculate new capacity with growth factor
-    let newCapacity = this.buffer.length;
+    // Calculate new capacity with growth factor (a zero-capacity buffer,
+    // e.g. after take(), restarts from a small floor instead of looping)
+    let newCapacity = Math.max(this.buffer.length, 16);
     while (newCapacity < minCapacity) {
       newCapacity = Math.ceil(newCapacity * this.growthFactor);
     }
@@ -112,6 +113,30 @@ export class GrowableBuffer<T extends TypedArray = Uint32Array> {
    */
   toArray(): T {
     return this.buffer.slice(0, this._length) as T;
+  }
+
+  /**
+   * Hand the written data over to the caller and detach it from this buffer.
+   *
+   * When the unused tail is at most `maxSlack` of the capacity, returns a
+   * view on the backing buffer (no copy: the tail rides along, e.g. in a
+   * worker transfer); otherwise returns a trimmed copy so a mostly-empty
+   * allocation is not kept alive. Either way the backing buffer is dropped
+   * and the GrowableBuffer restarts empty, so later writes cannot alias the
+   * returned array, and anything still holding the GrowableBuffer — e.g. a
+   * d3 projection that caches the last stream it wrapped — no longer pins
+   * the allocation.
+   */
+  take(maxSlack: number = 1 / 16): T {
+    const capacity = this.buffer.length;
+    const out = (
+      capacity - this._length <= capacity * maxSlack
+        ? this.buffer.subarray(0, this._length)
+        : this.buffer.slice(0, this._length)
+    ) as T;
+    this.buffer = new this.ArrayConstructor(0) as T;
+    this._length = 0;
+    return out;
   }
 
   /**

@@ -27,6 +27,7 @@ import {
   RecordBatch,
   Schema,
   Struct,
+  Type,
   Table,
   Vector,
 } from 'apache-arrow';
@@ -52,7 +53,7 @@ const EXTENSION_NAMES: Record<WkbGeomType, string> = {
 
 // ─── WKB header parsing ──────────────────────────────────────────────
 
-interface WkbHeader {
+export interface WkbHeader {
   /** Base geometry type (1=Point, 2=LineString, ..., 6=MultiPolygon) */
   baseType: number;
   /** Little-endian byte order */
@@ -68,11 +69,24 @@ interface WkbHeader {
  * Handles both ISO and EWKB dimension flags.
  */
 function readWkbHeader(wkb: Uint8Array): WkbHeader | null {
-  if (wkb.length < 5) return null;
-
-  const le = wkb[0] === 1;
   const dv = new DataView(wkb.buffer, wkb.byteOffset, wkb.byteLength);
-  const rawType = dv.getUint32(1, le);
+  return readWkbHeaderAt(dv, 0, wkb.length);
+}
+
+/**
+ * Parse the WKB/EWKB header of the `length` bytes starting at `offset` in
+ * `dv`. Returns null for invalid data. `dataOffset` stays relative to
+ * `offset`.
+ */
+export function readWkbHeaderAt(
+  dv: DataView,
+  offset: number,
+  length: number,
+): WkbHeader | null {
+  if (length < 5) return null;
+
+  const le = dv.getUint8(offset) === 1;
+  const rawType = dv.getUint32(offset + 1, le);
 
   let headerSize = 5;
 
@@ -111,9 +125,12 @@ function readWkbHeader(wkb: Uint8Array): WkbHeader | null {
  * Classify WKB type from first 5 bytes without full parse.
  */
 function classifyWkbType(wkb: Uint8Array): WkbGeomType | null {
-  const h = readWkbHeader(wkb);
-  if (!h) return null;
-  switch (h.baseType) {
+  return wkbBaseTypeName(readWkbHeader(wkb)?.baseType);
+}
+
+/** Geometry type name of a WKB base type number (1–6), null otherwise. */
+export function wkbBaseTypeName(baseType: number | undefined): WkbGeomType | null {
+  switch (baseType) {
     case 1: return 'point';
     case 2: return 'linestring';
     case 3: return 'polygon';
@@ -631,7 +648,7 @@ function decodeMultiPolygons(
  * Given a set of geometry types found in a column, determine the
  * unified type (promoting simple → multi when mixed).
  */
-function resolveUnifiedType(types: Set<WkbGeomType>): WkbGeomType {
+export function resolveUnifiedType(types: Set<WkbGeomType>): WkbGeomType {
   if (types.size === 1) return types.values().next().value!;
 
   // If we have both simple and multi of the same kind, promote to multi
@@ -908,10 +925,10 @@ export function isWkbGeometryColumn(
   const extensionName = field.metadata?.get('ARROW:extension:name');
   if (extensionName === 'geoarrow.wkb' || extensionName === 'ogc.wkb') return true;
 
-  // Check for Binary type (typeId 4 = Binary in Apache Arrow)
+  // Check for Binary / LargeBinary storage
   // DuckDB WASM produces Binary columns from ST_AsWKB without GeoArrow metadata
   const typeId = field.type?.typeId;
-  if (typeId === 4 /* Binary */ || typeId === 13 /* LargeBinary */) {
+  if (typeId === Type.Binary || typeId === Type.LargeBinary) {
     // Verify it's not a native geoarrow type with binary storage
     if (!extensionName || !extensionName.startsWith('geoarrow.')) {
       return true;

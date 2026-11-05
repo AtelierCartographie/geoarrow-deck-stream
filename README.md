@@ -29,15 +29,15 @@ The library accepts Apache Arrow tables with geometry columns in three formats:
 | ------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | **GeoArrow Interleaved** | `geoarrow.point`, `geoarrow.linestring`, etc. | Coordinates as `[x,y,x,y,...]` in a single `Float64Array`. Default in DuckDB-WASM, GeoParquet. |
 | **GeoArrow Separated**   | Same as above                                 | Coordinates as separate `x[]` and `y[]` arrays (Apache Arrow Struct encoding).                 |
-| **GeoArrow WKB**         | `geoarrow.wkb`                                | Well-Known Binary blobs in a `Binary` column. Auto-decoded to native GeoArrow before parsing.  |
+| **GeoArrow WKB**         | `geoarrow.wkb`                                | Well-Known Binary blobs in a `Binary` / `LargeBinary` column. Streamed in place, no conversion. |
 
 All geometry types are supported: **Point**, **MultiPoint**, **LineString**, **MultiLineString**, **Polygon** (with holes), **MultiPolygon**.
 
 ### WKB Support
 
-WKB input (`geoarrow.wkb`) is **transparently decoded** — all parse functions (`parseGeometry`, `parsePoints`, `parsePolygonsToSolid`) detect WKB columns and convert them to native GeoArrow automatically. No additional code is needed.
+WKB input (`geoarrow.wkb`) is **handled transparently** — all parse functions (`parseGeometry`, `parsePoints`, `parsePolygonsToSolid`) detect WKB columns and stream the coordinates straight from the WKB bytes into the projection, without converting them to native GeoArrow first (no intermediate coordinate buffer: WKB input costs about the same memory as native GeoArrow). No additional code is needed.
 
-For explicit control, you can also decode WKB manually:
+To get a native GeoArrow table (e.g. to keep it, or for other tools), you can also decode WKB explicitly:
 
 ```typescript
 import { decodeWkbColumn, isWkbGeometryColumn } from "@ateliercartographie/geoarrow-deck-stream";
@@ -227,8 +227,15 @@ coordinates), the longest main-thread block drops from ~2 s to ~15 ms, with
 bit-identical output.
 
 Inputs (Arrow IPC bytes) cross the thread boundary as a single structured
-clone (or a zero-copy transfer with `transferInput: true`); output TypedArrays
-are always **transferred** back, never copied.
+clone (or a zero-copy transfer with `transferInput: true`, which detaches the
+whole underlying `ArrayBuffer`: only use it on bytes nothing else keeps, e.g.
+not ones cached for a later request). A `Table` input is serialized by the
+client and always transferred. Output TypedArrays are always **transferred**
+back, never copied.
+
+Worker memory can be measured with `npm run bench:memory` (peak and retained
+heap of the worker for 60 000 polygons / 9.7 M vertices, see
+`bench/worker-memory.mjs` for options).
 
 Because d3 projections are closures, they cannot be posted to a worker.
 Instead the worker API takes a **serializable projection spec** — the factory

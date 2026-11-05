@@ -1,6 +1,6 @@
 {
   "name": "@ateliercartographie/geoarrow-deck-stream",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "High-performance GeoArrow to Deck.gl binary parser using d3-geo streaming",
   "type": "module",
   "main": "dist/index.js",
@@ -33,6 +33,7 @@
     "dev": "tsc --watch",
     "preview": "vite examples --port 8000",
     "test": "vitest run --watch=false",
+    "bench:memory": "tsc && node --expose-gc bench/worker-memory.mjs",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
